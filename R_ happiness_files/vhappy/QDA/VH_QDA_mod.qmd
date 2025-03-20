@@ -1,0 +1,248 @@
+---
+title: "LDA / QDA Very Happiness"
+format: html
+embed-resources: true
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(123)
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(kableExtra)
+library(recipes)
+library(MASS) #Modélisation LDA/QDA
+library(pROC)
+library(kknn)
+```
+
+# Importation des données v1
+
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness") #base de données
+
+
+ID_v1 <- happiness[, c(1:19,21,33)] %>%
+  mutate(
+    divorce = case_when(
+      divorce == "yes" ~ "yes",
+      divorce == "no" ~ "no",
+      divorce == "iap" ~ "iap",
+      is.na(divorce) ~ "NA"
+    ),
+    widowed = case_when(
+      widowed == "yes" ~ "yes",
+      widowed == "iap" ~ "iap",
+      widowed == "no" ~ "no",
+      is.na(widowed) ~ "NA"
+    ),
+    owngun = case_when(
+      owngun == "yes" ~ "yes",
+      owngun == "iap" ~ "iap",
+      owngun == "no" ~ "no",
+      is.na(owngun) ~ "NA"
+    ),
+    vhappy = case_when(
+      vhappy == "1" ~ "yes",
+      vhappy == "0" ~ "no",
+      is.na(vhappy) ~ "NA"
+    ),
+    unem10 = case_when(
+      unem10 == "1" ~ "yes",
+      unem10 == "0" ~ "no",
+      is.na(unem10) ~ "NA"
+    ),
+    attend = case_when(
+      attend == "never" ~ "0",
+      attend == "lt once a year" ~ "0.5",
+      attend == "once a year" ~ "1",
+      attend == "sevrl times a yr" ~ "6",
+      attend == "once a month" ~ "12",
+      attend == "2-3x a month" ~ "30",
+      attend == "nrly every week" ~ "42",
+      attend == "every week" ~ "52",
+      attend == "more thn once wk" ~ "104",
+      is.na(attend) ~ "NA"
+    ),
+  ) %>%
+  mutate(
+    year = as.factor(year),
+    workstat = as.factor(workstat),
+    prestige = as.numeric(prestige),
+    divorce = as.factor(divorce),
+    widowed = as.factor(widowed),
+    educ = as.numeric(educ),
+    reg16 = as.factor(reg16),
+    babies = as.numeric(babies),
+    preteen = as.numeric(preteen),
+    teens = as.numeric(teens),
+    income = as.factor(income),
+    region = as.factor(region),
+    attend = as.numeric(attend),
+    happy = as.factor(happy),
+    owngun = as.factor(owngun),
+    tvhours = as.numeric(tvhours),
+    vhappy = as.factor(vhappy),
+    mothfath16 = as.logical(mothfath16),
+    black = as.logical(black),
+    female = as.logical(female),
+    unem10 = as.factor(unem10)
+  )
+```
+
+### Enfants / pré-ados / ados v2
+
+```{r}
+ID_v2 <- ID_v1 %>% filter(babies != "NA")
+```
+
+### imputation de données manquantes de la variable *attend*
+
+```{r}
+n <- nrow(ID_v2) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_att <- ID_v2 %>% slice(train)
+dataTest_att <- ID_v2 %>% slice(-train)
+
+rec_att <- recipe(~., data = ID_v2) %>% 
+  step_impute_knn(attend, neighbors = 5)
+
+rec_att_prep <- prep(rec_att, training = dataTrain_att)
+ID_v3 <- bake(rec_att_prep, new_data = ID_v2)
+```
+
+### Imputation des données manquantes de income
+
+```{r}
+n <- nrow(ID_v3) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_i <- ID_v3 %>% slice(train)
+dataTest_i <- ID_v3 %>% slice(-train)
+
+# induce some missing data at random
+set.seed(1)
+
+rec_i <- recipe(~ .,data = ID_v3) %>% 
+  step_impute_knn(income, neighbors = 5)
+
+rec_i_prep <- prep(rec_i, dataTrain_i)
+ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
+```
+
+### imputation de données manquantes de la variable *prestige*
+
+```{r}
+n <- nrow(ID_v4) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_p <- ID_v4 %>% slice(train)
+dataTest_p <- ID_v4 %>% slice(-train)
+
+rec_p <- recipe(~., data = ID_v4) %>% 
+  step_impute_knn(prestige, neighbors = 5)
+
+rec_p_prep <- prep(rec_p, training = dataTrain_p)
+ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
+ID_v5$prestige <- round(ID_v5$prestige,0)
+```
+
+### Nettoyage des valeurs aberrantes
+
+```{r}
+#ID_v5 <- ID_v5[ID_v5$tvhours != 24, ] si aberrant car 4 ont mis + de 24h
+# Est ce qu'on retire tout ceux au dessus de 18h ?
+# ID_v5 <- ID_v5[ID_v5$babies != 6, ]
+# 1 personne à 6 bébé l'autre max est à 4
+```
+
+### imputation de données manquantes de la variable *tvhours*
+
+```{r}
+n <- nrow(ID_v5) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_tv <- ID_v5 %>% slice(train)
+dataTest_tv <- ID_v5 %>% slice(-train)
+
+rec_tv <- recipe(~., data = ID_v5) %>% 
+  step_impute_knn(tvhours, neighbors = 5)
+
+rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)
+ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
+```
+
+## Suppression des modalités vide
+```{r}
+ID_v6$happy <- droplevels(ID_v6$happy)
+# J'ai supprimé les individus à qui il restait une MDA
+ID_v6 <- na.omit(ID_v6)
+```
+
+
+# Echantillonage 
+
+```{r}
+set.seed(1)
+split_dat <- initial_split(ID_v6, prop = 0.75, strata = vhappy) # classique 3 quart / 1 quart
+dat_train <- training(split_dat)
+data_test <- testing(split_dat)
+```
+
+## Construction des différents modèles
+
+### Définition des modèles :
+
+```{r}
+#| label: Définition du modèle QDA
+
+qda_mod <- discrim_quad() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+```
+
+### recette à appliquer 
+
+```{r}
+dat_rec <- dat_train |> recipe(vhappy~educ+tvhours+attend) 
+
+#dat_rec <- dat_train |> recipe(vhappy~workstat +prestige+divorce+educ+income+attend+tvhours+female)
+# la recette est d'expliquer vhappy en fonction de toute les autres variables
+```
+
+```{r}
+qda_wf <- workflow() |> 
+  add_model(qda_mod) |> 
+  add_recipe(dat_rec)
+```
+
+
+```{r}
+collect <- function(x){
+  last_fit(x,split = split_dat) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
+    collect_predictions()
+}
+
+
+qda_result <- qda_wf |> collect()
+```
+
+
+
+Comparons les modèles :
+
+
+```{r}
+qda_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+roc(data_test$vhappy, qda_result$.pred_no) %>% auc()
+```
+
+Si proche de la bissectrice, le hasard est aussi bon que le modèle.

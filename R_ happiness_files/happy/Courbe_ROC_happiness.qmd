@@ -1,0 +1,115 @@
+---
+title: "Courbe ROC"
+format: html
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(kableExtra)
+library(recipes)
+library(MASS) #Modélisation LDA/QDA
+```
+
+# Importation des données
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness") #base de données
+happy_v1 <- happiness[,c(1:3,6:14,17:19,21:22,24:32)]
+```
+
+## Application du nettoyage
+
+### v1/v2/v3
+
+```{r}
+#| label: filtre enfant / croyance
+
+happy_v1 <- happy_v1 %>% mutate(
+  year = as.numeric(year),
+  workstat = as.factor(workstat),
+  prestige = as.factor(prestige),
+  educ = as.numeric(educ),
+  reg16 = as.factor(reg16),
+  babies = as.numeric(babies),
+  preteen = as.numeric(preteen),
+  teens = as.numeric(teens),
+  income = as.factor(income),
+  region = as.factor(region),
+  attend = as.factor(attend),
+  happy = as.factor(happy),
+  vhappy = as.logical(vhappy),
+  mothfath16 = as.logical(mothfath16),
+  black = as.logical(black),
+  female = as.logical(female),
+  blackfemale = as.logical(blackfemale),
+  occattend = as.logical(occattend),
+  regattend = as.logical(regattend),
+  y94 = as.logical(y94),
+  y96 = as.logical(y96),
+  y98 = as.logical(y98),
+  y00 = as.logical(y00),
+  y02 = as.logical(y02),
+  y04 = as.logical(y04),
+  y06 = as.logical(y06),
+  )
+################
+happy_v2 <- happy_v1 %>% filter(babies != "NA")
+################
+happy_v3 <- happy_v2 %>% filter(attend != "NA")
+```
+
+### v4 -\> imputation income
+
+```{r}
+#| label: imputation income / prestige
+
+n <- nrow(happy_v3) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_i <- happy_v3 %>% slice(train)
+dataTest_i <- happy_v3 %>% slice(-train)
+
+# induce some missing data at random
+set.seed(1)
+
+rec_i <- recipe(~ .,data = happy_v3) %>% 
+  step_impute_knn(income, neighbors = 5)
+
+rec_i_prep <- prep(rec_i, dataTrain_i)
+happy_v4 <- bake(rec_i_prep, new_data = happy_v3)
+```
+
+### v5 -\> imputation income
+
+```{r}
+n <- nrow(happy_v4) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_p <- happy_v4 %>% slice(train)
+dataTest_p <- happy_v4 %>% slice(-train)
+
+rec_p <- recipe(~., data = happy_v4) %>% 
+  step_impute_knn(prestige, neighbors = 5)
+
+rec_p_prep <- prep(rec_p, training = dataTrain_p)
+happy_v5 <- bake(rec_p_prep, new_data = happy_v4)
+```
+
+### Suppression des modalités vide
+
+```{r}
+happy_v5 <- droplevels(happy_v5)
+
+# J'ai supprimé les individus à qui il restait une MDA
+happy_v5 <- na.omit(happy_v5)
+```
+

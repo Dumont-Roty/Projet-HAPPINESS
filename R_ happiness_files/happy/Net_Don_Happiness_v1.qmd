@@ -1,0 +1,192 @@
+---
+title: "Nettoyage de la base de donnée"
+format: html
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+```
+
+# Importation des données v1
+
+```{r}
+vis_miss(happiness)
+```
+
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness") #base de données
+happy_v1 <- happiness[,c(1:3,6:14,17:19,21:22,24:32)]
+happy_v1 <- happy_v1 %>% mutate(
+  year = as.factor(year),
+  workstat = as.factor(workstat),
+  prestige = as.factor(prestige),
+  educ = as.numeric(educ),
+  reg16 = as.factor(reg16),
+  babies = as.numeric(babies),
+  preteen = as.numeric(preteen),
+  teens = as.numeric(teens),
+  income = as.factor(income),
+  region = as.factor(region),
+  attend = as.factor(attend),
+  happy = as.factor(happy),
+  vhappy = as.logical(vhappy),
+  mothfath16 = as.logical(mothfath16),
+  black = as.logical(black),
+  female = as.logical(female),
+  blackfemale = as.logical(blackfemale),
+  occattend = as.logical(occattend),
+  regattend = as.logical(regattend),
+  y94 = as.logical(y94),
+  y96 = as.logical(y96),
+  y98 = as.logical(y98),
+  y00 = as.logical(y00),
+  y02 = as.logical(y02),
+  y04 = as.logical(y04),
+  y06 = as.logical(y06),
+  )
+```
+
+# Présentation des données manquantes 
+
+```{r}
+vis_miss(happy_v1) # utilise le package "naniar"
+```
+
+La variable *income* possède **12%** de réponses non renseigné. 
+Les variables *prestige* (5%), celle liés à la religion(*attend*,*occattend*,*regattend*) ont chacune 2% et celles liés aux enfants (*teens*,*babies*,*preteens*) ont chacunes 1% de MDA
+
+On va chercher à imputer ces données manquantes pour pouvoir traiter correctement les donnnées. Regardons d'abord les données manquantes qui font partie d'un même theme.
+
+## Enfants / pré-ados / ados v2
+
+```{r}
+happyb <- happy_v1 %>% filter(is.na(babies))
+rbind(NA_filtré = happyb[,c(6:8)] %>% is.na() %>% colSums(),NA_N_filtré = happy_v1[,c(6:8)] %>% is.na() %>% colSums())
+```
+```{r}
+gg_miss_upset(happyb)
+```
+On voit que les individus qui n'ont pas renseigné le nombres de bébé à charge n'ont pas non plus sont ceux qui n'ont pas non plus remplie l'absence des enfants et ado. 
+
+On peut se permettre de supprimer les données des individus n'ayant pas renseigné les bébés à charges.
+
+```{r}
+happy_v2 <- happy_v1 %>% filter(babies != "NA")
+vis_miss(happy_v2)
+```
+## Présence religion (att/occ/reg) v3
+
+Même chose qu'au dessus sauf qu'on sttaque aux individus n'ayant pas renseigné les données sur leurs présence à des évements religieux
+
+```{r}
+happyr <- happy_v2 %>% filter(is.na(attend))
+rbind(NA_filtré = happyr[,c(11,18:19)] %>% is.na() %>% colSums(),NA_N_filtré = happy_v2[,c(11,18:19)] %>% is.na() %>% colSums())
+```
+```{r}
+gg_miss_upset(happyr)
+```
+
+Constat encore plus flagrant !!! 
+On va donc supprimer les individus ayant une absence de réponse dans l'une des catégories.
+
+```{r}
+happy_v3 <- happy_v2 %>% filter(attend != "NA")
+vis_miss(happy_v3)
+```
+
+# Imputation des données manquantes de income
+
+```{r}
+library(recipes)
+
+n <- nrow(happy_v3) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_i <- happy_v3 %>% slice(train)
+dataTest_i <- happy_v3 %>% slice(-train)
+
+# induce some missing data at random
+set.seed(1)
+
+rec_i <- recipe(~ .,data = happy_v3) %>% 
+  step_impute_knn(income, neighbors = 5)
+
+rec_i_prep <- prep(rec_i, dataTrain_i)
+happy_v4 <- bake(rec_i_prep, new_data = happy_v3)
+##################
+
+vis_miss(happy_v4)
+```
+
+On a supprimé les données manquantes de la variables income qu'on a remplacé par les k plus proche voisins
+
+```{r}
+# Pourcentage d'augmentation entre l'avant et l'apres
+ratio_b_a <- (summary(happy_v4$income)-summary(happy_v3$income))/summary(happy_v4$income)*100 
+
+cbind(
+  before = summary(happy_v3$income),
+  after = summary(happy_v4$income),
+  ratio = round(ratio_b_a,2)
+)
+```
+On voit que l'augmentation d'individu est d'environ `r mean(ratio_b_a[2:13], na.rm = TRUE)`%
+
+# imputation de données manquantes de la variable *prestige*
+
+```{r}
+n <- nrow(happy_v4) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_p <- happy_v4 %>% slice(train)
+dataTest_p <- happy_v4 %>% slice(-train)
+
+rec_p <- recipe(~., data = happy_v4) %>% 
+  step_impute_knn(prestige, neighbors = 5)
+
+rec_p_prep <- prep(rec_p, training = dataTrain_p)
+happy_v5 <- bake(rec_p_prep, new_data = happy_v4)
+
+##############
+
+vis_miss(happy_v5)
+```
+```{r}
+# Pourcentage d'augmentation entre l'avant et l'apres
+ratio_b_a <- (summary(happy_v5$prestige)-summary(happy_v4$prestige))/summary(happy_v5$prestige)*100 
+
+cbind(
+  before = summary(happy_v4$prestige),
+  after = summary(happy_v5$prestige),
+  ratio = round(ratio_b_a,2)
+)
+```
+
+```{r}
+str(happy_v5)
+```
+
+# Suppression des modalités vide
+```{r}
+happy_v5$happy <- droplevels(happy_v5$happy)
+```
+
+# Il nous reste des NA dans les variables explicative de notre LDA / QDA
+
+Est ce qu'on supprime les individus qui ont des NA ? Est ce qu'on impute ? Je serai tenté d'imputer la variable éduc car il y aau total 35 NA. 
+
+Pour les autres variables on supprime.

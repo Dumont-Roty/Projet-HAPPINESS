@@ -1,0 +1,407 @@
+---
+title: "LDA / QDA_happiness"
+format: html
+editor: visual
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(kableExtra)
+library(recipes)
+library(MASS) #Modélisation LDA/QDA
+```
+
+# Importation des données
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness") #base de données
+happy_v1 <- happiness[,c(1:3,6:14,17:19,21:22,24:32)]
+```
+
+## Application du nettoyage
+
+### v1/v2/v3
+
+```{r}
+#| label: filtre enfant / croyance
+
+happy_v1 <- happy_v1 %>% mutate(
+  year = as.numeric(year),
+  workstat = as.factor(workstat),
+  prestige = as.factor(prestige),
+  educ = as.numeric(educ),
+  reg16 = as.factor(reg16),
+  babies = as.numeric(babies),
+  preteen = as.numeric(preteen),
+  teens = as.numeric(teens),
+  income = as.factor(income),
+  region = as.factor(region),
+  attend = as.factor(attend),
+  happy = as.factor(happy),
+  vhappy = as.logical(vhappy),
+  mothfath16 = as.logical(mothfath16),
+  black = as.logical(black),
+  female = as.logical(female),
+  blackfemale = as.logical(blackfemale),
+  occattend = as.logical(occattend),
+  regattend = as.logical(regattend),
+  y94 = as.logical(y94),
+  y96 = as.logical(y96),
+  y98 = as.logical(y98),
+  y00 = as.logical(y00),
+  y02 = as.logical(y02),
+  y04 = as.logical(y04),
+  y06 = as.logical(y06),
+  )
+################
+happy_v2 <- happy_v1 %>% filter(babies != "NA")
+################
+happy_v3 <- happy_v2 %>% filter(attend != "NA")
+```
+
+### v4 -\> imputation income
+
+```{r}
+#| label: imputation income / prestige
+
+n <- nrow(happy_v3) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_i <- happy_v3 %>% slice(train)
+dataTest_i <- happy_v3 %>% slice(-train)
+
+# induce some missing data at random
+set.seed(1)
+
+rec_i <- recipe(~ .,data = happy_v3) %>% 
+  step_impute_knn(income, neighbors = 5)
+
+rec_i_prep <- prep(rec_i, dataTrain_i)
+happy_v4 <- bake(rec_i_prep, new_data = happy_v3)
+```
+
+### v5 -\> imputation income
+
+```{r}
+n <- nrow(happy_v4) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_p <- happy_v4 %>% slice(train)
+dataTest_p <- happy_v4 %>% slice(-train)
+
+rec_p <- recipe(~., data = happy_v4) %>% 
+  step_impute_knn(prestige, neighbors = 5)
+
+rec_p_prep <- prep(rec_p, training = dataTrain_p)
+happy_v5 <- bake(rec_p_prep, new_data = happy_v4)
+```
+
+### Suppression des modalités vide
+
+```{r}
+happy_v5 <- droplevels(happy_v5)
+
+# J'ai supprimé les individus à qui il restait une MDA
+happy_v5 <- na.omit(happy_v5)
+```
+
+# LDA / QDA (sans tidymodels)
+
+## Echantillonnage
+
+```{r}
+n <- nrow(happy_v5) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(size = N, x = 1:n) # découpage de la data train
+dataTrain <- happy_v5 %>% slice(train)
+dataTest <- happy_v5 %>% slice(-train)
+```
+
+### Analyse linéaire discriminante
+
+Doit prendre en compte des variables numéraire
+
+#### Modélisation
+
+```{r}
+lda.fit <- lda(happy ~ educ + babies + preteen + teens, data = dataTrain) # Création du modèle d'entrainement
+```
+
+On observe les sorties des commandes suivantes :
+
+```{r}
+summary(lda.fit)
+str(lda.fit)
+```
+
+#### Affectation
+
+```{r}
+# Problème ici
+lda.predict <- lda.fit |> predict(newdata = dataTest)
+```
+
+#### Qualité du modèle
+
+```{r}
+#| label: Matrice de confusion
+Réalité <- dataTest$happy
+
+ Prédictions<-lda.predict$class
+ 
+ tab0<-table(dataTest$happy,lda.predict$class) %>% addmargins()
+ 
+ tab<-tab0 %>%matrix(nrow=nrow(tab0)) %>%
+ as_tibble()%>%
+ add_column(Réalité=c("Very Happy","Pretty Happy","Not to Happy","Total"),.before=1)%>%
+ rename("Very Happy"=V1,"Pretty Happy"=V2,"Not to Happy"=V3, Total = V4)
+ 
+ tab %>%
+  kable() %>%
+  add_header_above(c("", "Prédiction" = 3, "")) %>%
+  column_spec(5, bold = TRUE, background = "#F4F6F6", width = "2cm") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(4, bold = TRUE, background = "#F4F6F6") %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_styling(position = "center", full_width = FALSE, bootstrap_options = "bordered", latex_options = "hold_position")
+```
+
+### QDA (Analyse quadratique discriminante)
+
+Doit prendre en compte des variables numéraire
+
+#### Modélisation
+
+```{r}
+qda.fit <- qda(happy ~ educ + babies + preteen + teens, data = dataTrain) # Création du modèle d'entrainement
+```
+
+#### Affectation
+
+```{r}
+# Problème ici
+qda.predict <- qda.fit |> predict(newdata = dataTest)
+```
+
+#### Qualité du modèle
+
+```{r}
+#| label: Matrice de confusion
+Réalité <- dataTest$happy
+
+ Prédictions<-qda.predict$class
+ 
+ tab0<-table(dataTest$happy,qda.predict$class) %>% addmargins()
+ 
+ tab<-tab0 %>%matrix(nrow=nrow(tab0)) %>%
+ as_tibble()%>%
+ add_column(Réalité=c("Very Happy","Pretty Happy","Not to Happy","Total"),.before=1)%>%
+ rename("Very Happy"=V1,"Pretty Happy"=V2,"Not to Happy"=V3, Total = V4)
+ 
+ tab %>%
+  kable() %>%
+  add_header_above(c("", "Prédiction" = 3, "")) %>%
+  column_spec(5, bold = TRUE, background = "#F4F6F6", width = "2cm") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(4, bold = TRUE, background = "#F4F6F6") %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_styling(position = "center", full_width = FALSE, bootstrap_options = "bordered", latex_options = "hold_position")
+```
+
+```{r}
+#| label: Matrice de confusion (%)
+Réalité <- dataTest$happy
+
+ Prédictions<-qda.predict$class
+ 
+ tab0<-table(dataTest$happy,qda.predict$class) %>% 
+ proportions(margin = 1) |> #permet de ùettre en proportion 
+ addmargins(margin = 2) |> 
+ round(2) #on arrondfis pour plus de visibilité
+ tab <- tab0 |> matrix(nrow=nrow(tab0)) |> 
+ as_tibble() |> 
+ add_column(Realite=c("Very Happy","Pretty Happy","Not to Happy"),.before=1) |> 
+ rename("Very Happy"=V1,"Pretty Happy"=V2,"Not to Happy"=V3, Total = V4)
+ tab |> kable() |> 
+ add_header_above(c("","Prédiction"=3,"")) |> 
+ column_spec(c(5),bold=T,background="#F4F6F6",width="2cm")  |> 
+ column_spec(1,bold=T) |> 
+ row_spec(c(0),bold=T) |> 
+ kable_styling(full_width=FALSE,
+ bootstrap_options="bordered",
+ latex_options="hold_position")
+```
+
+# LDA / QDA (todymodels)
+
+## Modèle linéaire
+
+### Création du modèle
+
+```{r}
+lda_spec <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+lda_fit <- lda_spec |> 
+  fit(happy~educ + babies + preteen + teens,data = dataTrain)
+```
+
+### Obtention de la matrice de confusion sur les données test
+
+```{r}
+predict(lda_fit, new_data = dataTrain, type = "prob")
+```
+
+```{r}
+tab <- augment(lda_fit,new_data = dataTest) |> conf_mat(truth=happy,estimat=.pred_class)
+
+
+tab[[1]]%>%
+ matrix(nrow=nrow(.))%>%
+ t()%>%
+ addmargins()%>%
+ as_tibble()%>%
+ add_column(Réalité=c("Very Happy","Pretty Happy","Not to Happy","Total"),.before=1)%>%rename("Very Happy"=V1,"Pretty Happy"=V2,"Not to Happy"=V3,Total=Sum)%>%
+ kable()%>%
+ add_header_above(c("","Prédiction"=3,""))%>%
+ column_spec(c(5),bold=T,background="#F4F6F6",width="2cm") %>%
+ column_spec(1,bold=T)%>%
+ row_spec(c(4),bold=T,background="#F4F6F6") %>%
+ row_spec(c(0),bold=T)%>%
+ kable_styling(position="center",
+ full_width=FALSE,
+ bootstrap_options = "bordered",
+ latex_options = "hold_position")
+```
+
+## QDA
+
+### Création du modèle
+
+```{r}
+qda_spec <- discrim_quad() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+qda_fit <- qda_spec |> 
+  fit(happy~educ + babies + preteen + teens, data = dataTrain)
+```
+
+### Obtention matrice de confusion sur les données test
+
+```{r}
+predict(qda_fit, new_data = dataTest, type = "prob")
+```
+
+```{r}
+tab <- augment(qda_fit,new_data = dataTest) |> conf_mat(truth=happy,estimat=.pred_class)
+
+tab[[1]]%>%
+ matrix(nrow=nrow(.))%>%
+ t()%>%
+ addmargins()%>%
+ as_tibble()%>%
+ add_column(Réalité=c("Very Happy","Pretty Happy","Not to Happy","Total"),.before=1)%>%rename("Very Happy"=V1,"Pretty Happy"=V2,"Not to Happy"=V3,Total=Sum)%>%
+ kable()%>%
+ add_header_above(c("","Prédiction"=3,""))%>%
+ column_spec(c(5),bold=T,background="#F4F6F6",width="2cm") %>%
+ column_spec(1,bold=T)%>%
+ row_spec(c(4),bold=T,background="#F4F6F6") %>%
+ row_spec(c(0),bold=T)%>%
+ kable_styling(position="center",
+ full_width=FALSE,
+ bootstrap_options = "bordered",
+ latex_options = "hold_position")
+```
+
+On voit que dans les prédiction du modèle quadratique: - la modalité "Very Happy" est prédite 126 fois mais fait 77 erreurs. - la modalité "Pretty happy" est prédite 5408 fois dont `r 1720+652` erreurs. - la modalité "Not to happy" est prédite 41 fois mais fait 33 erreurs
+
+Il y a au total 3093 bonne prédiction et 2482 erreurs de prédiction.
+
+On a, grâce au modèle de l'analyse quadratique discriminante, un taux de bonne prédiction de `r round(3093/5575*100,2)`%
+
+### Matrice des confusions en proportion
+
+```{r}
+#| label: matrice des confusions (proportion)
+pourcent <- function(x) { 100 * x }
+
+
+# Transformation et mise en forme du tableau
+tab[[1]] %>%
+  proportions(margin = 2) %>%
+  pourcent() %>% 
+  matrix(nrow = nrow(.)) %>%
+  t() %>%
+  addmargins(margin = 2) %>%
+  as_tibble() %>%
+  add_column(Réalité = c("Very Happy", "Pretty Happy", "Not to Happy"), .before = 1) %>%
+  rename("Very Happy" = V1, "Pretty Happy" = V2, "Not to Happy" = V3, "Total" = Sum) %>%
+  kable(digits = 1) %>%  # Arrondi à 1 décimale
+  add_header_above(c("", "Prédiction" = 3, "")) %>%
+  column_spec(5, bold = TRUE, background = "#F4F6F6", width = "2cm") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_styling(
+    position = "center",
+    full_width = FALSE,
+    bootstrap_options = "bordered",
+    latex_options = "hold_position"
+  )
+```
+
+```{r}
+#| label: probabilité
+qda.predict$posterior  |>  head()  |>  
+  kable()  |>  
+  kable_styling(full_width = FALSE,
+                bootstrap_options = "bordered",
+                latex_options = "hold_position")
+```
+
+### Abaissement du seuil
+
+```{r}
+#| label: seuil
+class20 <- case_when(
+  qda.predict$posterior[,2] > 0.6 ~ "Very Happy", # Seuil à retravailler ?
+  qda.predict$posterior[,2] > 0.2 ~ "Pretty Happy",
+  TRUE ~ "Not too Happy"
+) |> as.factor()
+```
+
+```{r}
+#| label: matrice des confusions 2
+
+tab20 <- table(Réalité = dataTest$happy, Prédiction = class20)  |>  addmargins()
+
+tab20 <- tab20  |>  matrix(nrow=nrow(tab20))  |> 
+  as_tibble()  |> 
+  add_column(Réalité=c("Very Happy", "Pretty Happy", "Not too Happy", "Total"),.before=1)  |> 
+  rename(No = V1, Yes = V2,Total=V3)
+
+tab20  |>  kable()  |>  
+  add_header_above(c(" ","Prédiction" = 3," "))  |> 
+  column_spec(c(5), bold = T, background ="#F4F6F6" ,width="2cm")  |> 
+  column_spec(1,bold=T)  |> 
+  row_spec(c(3), bold = T, background ="#F4F6F6" )  |> 
+  row_spec(c(0), bold = T)  |> 
+  kable_styling(position="center",full_width = FALSE,
+                bootstrap_options = "bordered",
+                latex_options = "hold_position")
+
+```
+
+# Etude des erreurs en fonction du seuil
+
+```{r}
+Seuil <- seq(0,0.5 )
+```

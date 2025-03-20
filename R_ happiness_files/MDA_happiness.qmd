@@ -1,0 +1,84 @@
+---
+title: "Visualisation données manquantes"
+format: html
+
+---
+
+# Importation des données 
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness")
+vis_miss(happiness)
+```
+
+```{r}
+summary(happiness$educ)
+```
+
+
+# Visualisation des données manquantes 
+
+```{r}
+#| label: package de visualisation
+library(naniar)
+library(missMDA)
+library(ggplot2)
+```
+
+```{r}
+vis_miss(happiness) # Observation manquante
+gg_miss_var(happiness) # QUantité de données manquante par variable
+```
+La variable expliqué est happiness. Il y a beaucoup de données manquantes dans les variables gwbush04 et gwbush00 qui indique si oui ou non il a voté pour George W. Bush aux éléctions de 2000 et 2004 sont les plus importantes. On peut aussi se poser des questions sur les varibales *divorced* (43%), *widowed*(35%) *owngun* (34%), *Unem10*(34%) et *tvhours*(31%)
+
+```{r}
+#| label: Pattern de données manquantes
+gg_miss_upset(happiness) # Patterns de données manquantes
+```
+On voit que énormément d'indivudus qui ont une données manquantes dans une variable ont une autre données manquantes dans une autre variables. 3799 personnes n'ont pas renseigné si ils avaient voté pour G.W.Bush lors des 2 éléctions. On peut aussi dire que 1143 individus n'ont indiqué ni leurs votes, ni s'ils étaient divorcé, s'ils étaient veuf ou possédaient des armes à feu.
+
+```{r}
+#| label: exploration NA en fonction d'une autre variable
+
+gg_miss_var(happiness, facet = happy)
+table(happiness$happy)
+```
+
+Difficile de réaliser un nuage de point avec le nombre de variable qualitative présente.
+
+```{r}
+ggplot(happiness)+aes(x = educ, y = income)+geom_miss_point()
+```
+
+
+```{r}
+summary(happiness)
+```
+```{r}
+library(dplyr)
+GWB_06 <- happiness %>% filter(year == "2006")
+                                         #"2001","2002","2003","2004","2005","2006")
+                                         
+```
+
+```{r}
+#| label: quand la question à été posé
+
+table(happiness$year)
+```
+```{r}
+vis_miss(GWB_06)
+```
+
+# Suppression des catégories à forte données manquantes.
+
+```{r}
+#| label: suppression des variables >30% MDA
+
+happy <- happiness[,c(1:3,6:14,17:19,21:22,24:25,27:32)]
+vis_miss(happy)
+```
+

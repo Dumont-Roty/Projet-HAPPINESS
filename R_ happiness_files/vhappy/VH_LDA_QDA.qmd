@@ -1,0 +1,434 @@
+---
+title: "LDA / QDA Very Happiness"
+format: html
+embed-resources: true
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(123)
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(kableExtra)
+library(recipes)
+library(MASS) #Modélisation LDA/QDA
+library(pROC)
+```
+
+# Importation des données v1
+
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness") #base de données
+
+
+ID_v1 <- happiness[, c(1:19,21,33)] %>%
+  mutate(
+    divorce = case_when(
+      divorce == "yes" ~ "yes",
+      divorce == "no" ~ "no",
+      divorce == "iap" ~ "iap",
+      is.na(divorce) ~ "NA"
+    ),
+    widowed = case_when(
+      widowed == "yes" ~ "yes",
+      widowed == "iap" ~ "iap",
+      widowed == "no" ~ "no",
+      is.na(widowed) ~ "NA"
+    ),
+    owngun = case_when(
+      owngun == "yes" ~ "yes",
+      owngun == "iap" ~ "iap",
+      owngun == "no" ~ "no",
+      is.na(owngun) ~ "NA"
+    ),
+    vhappy = case_when(
+      vhappy == "1" ~ "yes",
+      vhappy == "0" ~ "no",
+      is.na(vhappy) ~ "NA"
+    ),
+    unem10 = case_when(
+      unem10 == "1" ~ "yes",
+      unem10 == "0" ~ "no",
+      is.na(unem10) ~ "NA"
+    ),
+    attend = case_when(
+      attend == "never" ~ "0",
+      attend == "lt once a year" ~ "0.5",
+      attend == "once a year" ~ "1",
+      attend == "sevrl times a yr" ~ "6",
+      attend == "once a month" ~ "12",
+      attend == "2-3x a month" ~ "30",
+      attend == "nrly every week" ~ "42",
+      attend == "every week" ~ "52",
+      attend == "more thn once wk" ~ "104",
+      is.na(attend) ~ "NA"
+    ),
+  ) %>%
+  mutate(
+    year = as.factor(year),
+    workstat = as.factor(workstat),
+    prestige = as.numeric(prestige),
+    divorce = as.factor(divorce),
+    widowed = as.factor(widowed),
+    educ = as.numeric(educ),
+    reg16 = as.factor(reg16),
+    babies = as.numeric(babies),
+    preteen = as.numeric(preteen),
+    teens = as.numeric(teens),
+    income = as.factor(income),
+    region = as.factor(region),
+    attend = as.numeric(attend),
+    happy = as.factor(happy),
+    owngun = as.factor(owngun),
+    tvhours = as.numeric(tvhours),
+    vhappy = as.factor(vhappy),
+    mothfath16 = as.logical(mothfath16),
+    black = as.logical(black),
+    female = as.logical(female),
+    unem10 = as.factor(unem10)
+  )
+```
+
+### Enfants / pré-ados / ados v2
+
+```{r}
+ID_v2 <- ID_v1 %>% filter(babies != "NA")
+```
+
+### imputation de données manquantes de la variable *attend*
+
+```{r}
+n <- nrow(ID_v2) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_att <- ID_v2 %>% slice(train)
+dataTest_att <- ID_v2 %>% slice(-train)
+
+rec_att <- recipe(~., data = ID_v2) %>% 
+  step_impute_knn(attend, neighbors = 5)
+
+rec_att_prep <- prep(rec_att, training = dataTrain_att)
+ID_v3 <- bake(rec_att_prep, new_data = ID_v2)
+```
+
+### Imputation des données manquantes de income
+
+```{r}
+n <- nrow(ID_v3) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_i <- ID_v3 %>% slice(train)
+dataTest_i <- ID_v3 %>% slice(-train)
+
+# induce some missing data at random
+set.seed(1)
+
+rec_i <- recipe(~ .,data = ID_v3) %>% 
+  step_impute_knn(income, neighbors = 5)
+
+rec_i_prep <- prep(rec_i, dataTrain_i)
+ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
+```
+
+### imputation de données manquantes de la variable *prestige*
+
+```{r}
+n <- nrow(ID_v4) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_p <- ID_v4 %>% slice(train)
+dataTest_p <- ID_v4 %>% slice(-train)
+
+rec_p <- recipe(~., data = ID_v4) %>% 
+  step_impute_knn(prestige, neighbors = 5)
+
+rec_p_prep <- prep(rec_p, training = dataTrain_p)
+ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
+ID_v5$prestige <- round(ID_v5$prestige,0)
+```
+
+### Nettoyage des valeurs aberrantes
+
+```{r}
+#ID_v5 <- ID_v5[ID_v5$tvhours != 24, ] si aberrant car 4 ont mis + de 24h
+# Est ce qu'on retire tout ceux au dessus de 18h ?
+# ID_v5 <- ID_v5[ID_v5$babies != 6, ]
+# 1 personne à 6 bébé l'autre max est à 4
+```
+
+### imputation de données manquantes de la variable *tvhours*
+
+```{r}
+n <- nrow(ID_v5) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_tv <- ID_v5 %>% slice(train)
+dataTest_tv <- ID_v5 %>% slice(-train)
+
+rec_tv <- recipe(~., data = ID_v5) %>% 
+  step_impute_knn(tvhours, neighbors = 5)
+
+rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)
+ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
+```
+
+## Suppression des modalités vide
+```{r}
+ID_v6$happy <- droplevels(ID_v6$happy)
+# J'ai supprimé les individus à qui il restait une MDA
+ID_v6 <- na.omit(ID_v6)
+```
+
+# LDA / QDA (tidymodels)
+
+## Modèle linéaire (LDA)
+
+### Echantillonage
+
+```{r}
+n <- nrow(ID_v6) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(size = N, x = 1:n) # découpage de la data train
+dataTrain <- ID_v6 %>% slice(train)
+dataTest <- ID_v6 %>% slice(-train)
+```
+
+
+### Création du modèle
+
+```{r}
+lda_spec <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+
+lda_fit <- lda_spec |> 
+  fit(vhappy ~ prestige + educ + babies + preteen + teens + attend + tvhours,data = dataTrain)
+```
+
+### Obtention de la matrice de confusion sur les données test
+
+```{r}
+lda_predict <- lda_fit %>% predict(new_data = dataTest)
+```
+
+```{r}
+tab <- augment(lda_fit,new_data = dataTest) |> conf_mat(truth=vhappy,estimat=.pred_class)
+
+
+tab[[1]]%>%
+ matrix(nrow=nrow(.))%>%
+ t()%>%
+ addmargins()%>%
+ as_tibble()%>%
+ add_column(Réalité=c("Very Happy","Not very happy","Total"),.before=1)%>%rename("Very Happy"=V1,"Not very Happy"=V2,Total=Sum)%>%
+ kable()%>%
+ add_header_above(c("","Prédiction"=2,""))%>%
+ column_spec(c(4),bold=T,background="#F4F6F6",width="2cm") %>%
+ column_spec(1,bold=T)%>%
+ row_spec(c(3),bold=T,background="#F4F6F6") %>%
+ row_spec(c(0),bold=T)%>%
+ kable_styling(position="center",
+ full_width=FALSE,
+ bootstrap_options = "bordered",
+ latex_options = "hold_position")
+```
+
+## Modèle quadratique (QDA)
+
+### Création du modèle
+
+```{r}
+qda_spec <- discrim_quad() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+
+qda_fit <- qda_spec |> 
+  fit(vhappy ~ prestige + educ + babies + preteen + teens + attend + tvhours, data = dataTrain)
+```
+
+### Obtention matrice de confusion sur les données test
+
+```{r}
+qda_predict <- qda_fit |> predict(new_data = dataTest)
+```
+
+```{r}
+tab <- augment(qda_fit,new_data = dataTest) |> conf_mat(truth=vhappy,estimat=.pred_class)
+
+tab[[1]]%>%
+ matrix(nrow=nrow(.))%>%
+ t()%>%
+ addmargins()%>%
+ as_tibble()%>%
+ add_column(Réalité=c("Very Happy","Not very Happy","Total"),.before=1)%>%rename("Very Happy"=V1,"Not very Happy"=V2,Total=Sum)%>%
+ kable()%>%
+ add_header_above(c("","Prédiction"=2,""))%>%
+ column_spec(c(4),bold=T,background="#F4F6F6",width="2cm") %>%
+ column_spec(1,bold=T)%>%
+ row_spec(c(3),bold=T,background="#F4F6F6") %>%
+ row_spec(c(0),bold=T)%>%
+ kable_styling(position="center",
+ full_width=FALSE,
+ bootstrap_options = "bordered",
+ latex_options = "hold_position")
+```
+
+On voit que dans les prédiction du modèle quadratique: - la modalité "Very Happy" est prédite 126 fois mais fait 77 erreurs. - la modalité "Pretty happy" est prédite 5408 fois dont `r 1720+652` erreurs. - la modalité "Not to happy" est prédite 41 fois mais fait 33 erreurs
+
+Il y a au total 3093 bonne prédiction et 2482 erreurs de prédiction.
+
+On a, grâce au modèle de l'analyse quadratique discriminante, un taux de bonne prédiction de `r round(3093/5575*100,2)`%
+
+### Matrice des confusions en proportion
+
+```{r}
+#| label: matrice des confusions (proportion)
+pourcent <- function(x) { 100 * x }
+
+
+# Transformation et mise en forme du tableau
+tab[[1]] %>%
+  proportions(margin = 2) %>%
+  pourcent() %>% 
+  matrix(nrow = nrow(.)) %>%
+  t() %>%
+  addmargins(margin = 2) %>%
+  as_tibble() %>%
+  add_column(Réalité = c("Very Happy", "Not very Happy"), .before = 1) %>%
+  rename("Very Happy" = V1,"Not very Happy" = V2, "Total" = Sum) %>%
+  kable(digits = 1) %>%  # Arrondi à 1 décimale
+  add_header_above(c("", "Prédiction" = 2, "")) %>%
+  column_spec(4, bold = TRUE, background = "#F4F6F6", width = "2cm") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_styling(
+    position = "center",
+    full_width = FALSE,
+    bootstrap_options = "bordered",
+    latex_options = "hold_position"
+  )
+```
+
+```{r}
+#| label: probabilité
+
+round(predict(qda_fit, new_data = dataTest, type = "prob"),3)
+```
+
+### Abaissement du seuil
+
+```{r}
+#| label: seuil
+class20 <- ifelse(qda_predict$posterior[,2]>0.2, "yes", "no")  |>  as.factor()
+```
+
+```{r}
+#| label: matrice des confusions 2
+
+tab20 <- table(Réalité = dataTest$vhappy, Prédiction = class20)  |>  addmargins()
+
+tab20 <- tab20  |>  matrix(nrow=nrow(tab20))  |> 
+  as_tibble()  |> 
+  add_column(Réalité=c("Very Happy", "Not very Happy", "Total"),.before=1)  |> 
+  rename("Very Happy"=V1,  "Not very Happy"=V2, "Total"=V3)
+
+tab20  |>  kable()  |>  
+  add_header_above(c(" ","Prédiction" = 2," "))  |> 
+  column_spec(c(4), bold = T, background ="#F4F6F6" ,width="2cm")  |> 
+  column_spec(1,bold=T)  |> 
+  row_spec(c(3), bold = T, background ="#F4F6F6" )  |> 
+  row_spec(c(0), bold = T)  |> 
+  kable_styling(position="center",full_width = FALSE,
+                bootstrap_options = "bordered",
+                latex_options = "hold_position")
+
+```
+
+# Etude des erreurs en fonction du seuil
+```{r}
+#| label: test-1
+
+# Création du vecteur seuil
+Seuil <- seq(0, 1, by = 0.01) # On fait varier le seuil de 0 à 0.5 
+
+# Initialisation des vecteurs d'erreurs
+ErrorI <- numeric(length(Seuil))  # Erreur de première espèce 
+ErrorII <- numeric(length(Seuil)) # Erreur de seconde espèce
+Error <- numeric(length(Seuil)) # Erreur globale
+
+# Variables de réalité
+Realite <- dataTest$vhappy
+V <- sum(Realite == "yes")
+NV <- sum(Realite == "no")
+
+# Boucle sur les seuils
+for (i in seq_along(Seuil)) {
+  c <- Seuil[i]
+
+  # Classification en fonction du seuil
+  classc <- ifelse(lda.predict$posterior[, 2] > c, "yes",
+                   ifelse(lda.predict$posterior[, 3] > c, "no"))
+  
+  # Calcul des erreurs
+  Error[i] <- sum(classc != Realite) / length(Realite)  # Erreur globale
+  
+  ErrorI[i] <- sum((classc == "yes") & (Realite == "no")) / V # Fausse alarme
+  ErrorII[i] <- sum((classc == "no") & (Realite == "yes")) / NV # Mauvaise classification
+}
+# Commentaire : À seuil 0, on classe tout en "very happy", puis peu à peu on classe davantage dans "pretty happy" et "not too happy".
+
+plot(Seuil, Error, type = "l", ylim = c(0,5))
+lines(Seuil, ErrorI, type = "l", lty = "dotted", col = "purple")
+lines(Seuil, ErrorII, type = "l", lty = "dashed", col = "blue")
+```
+
+```{r}
+#| label: test-2
+
+# création vecteur seuil
+# pour faire évoluer le seuil 
+Seuil <- seq(0, 0.5, by = 0.01) # on fait varier le seuil de 0 à 0.5 
+
+ErrorI <- NULL # erreur première espèce 
+ErrorII <- NULL # erreur seconde espèce
+Error <- NULL # erreur globale
+i <- 1
+Realite <- dataTest
+N <- sum(Realite == "no")
+P <- sum(Realite == "yes")
+
+for(c in Seuil){
+  classc <- ifelse(lda_predict$posterior[,2]>c, "yes", "no")
+  Error[i] <- sum(classc != Realite)/1000
+  ErrorI[i] <- sum((classc == "yes") & (Realite == "no"))/N # ceux qui sont classé Yes alors que en réalité sont No
+  ErrorII[i] <- sum((classc == "no") & (Realite == "yes"))/P # ceux qui sont classé No alors que en réalité sont Yes
+  i <- i+1
+}
+
+# à 0 comme seuil on classe tous dans Yes
+# puis peu à peu on en classe davantage dans No
+
+plot(Seuil, Error, type = "l", ylim = c(0,1))
+lines(Seuil, ErrorI, type = "l", lty = "dotted", col = "orange")
+lines(Seuil, ErrorII, type = "l", lty = "dashed", col = "blue")
+```
+
+
+# Courbe ROC avec Tidymodels
+
+
+```{r}
+tabroc <- roc(dataTest$vhappy, lda.predict$posterior[,1])
+# compare la réalité avec les résultats des proba a posteriori
+ggroc(tabroc)
+auc(tabroc)
+```
+
+

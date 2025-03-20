@@ -1,0 +1,236 @@
+---
+title: "Imputation données"
+format: html
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+```
+
+# Importation des données v1
+
+
+```{r}
+#| label: Package de données
+
+library(wooldridge)
+data("happiness") #base de données
+
+ID_v1 <- happiness[, c(1:19,21:22,24:25, 33)] %>%
+  mutate(
+    divorce = ifelse(divorce == "yes", 1, 0),
+    widowed = ifelse(widowed == "yes", 1, 0),
+    owngun = ifelse(owngun == "yes", 1, 0)
+  ) %>%
+  mutate(
+    year = as.factor(year),
+    workstat = as.factor(workstat),
+    prestige = as.factor(prestige),
+    divorce = as.logical(divorce),
+    widowed = as.logical(widowed),
+    educ = as.numeric(educ),
+    reg16 = as.factor(reg16),
+    babies = as.numeric(babies),
+    preteen = as.numeric(preteen),
+    teens = as.numeric(teens),
+    income = as.factor(income),
+    region = as.factor(region),
+    attend = as.factor(attend),
+    happy = as.factor(happy),
+    owngun = as.logical(owngun),
+    tvhours = as.numeric(tvhours),
+    mothfath16 = as.logical(mothfath16),
+    black = as.logical(black),
+    female = as.logical(female),
+    blackfemale = as.logical(blackfemale),
+    occattend = as.logical(occattend),
+    regattend = as.logical(regattend),
+    unem10 = as.logical(unem10)
+  )
+```
+
+```{r}
+vis_miss(ID_v1) # utilise le package "naniar"
+```
+### Enfants / pré-ados / ados v2
+
+```{r}
+ID_b <- ID_v1 %>% filter(is.na(babies))
+rbind(NA_filtré = ID_b[,c(8:10)] %>% is.na() %>% colSums(),NA_N_filtré = ID_v1[,c(8:10)] %>% is.na() %>% colSums())
+
+ID_v2 <- ID_v1 %>% filter(babies != "NA")
+```
+
+###Religieux
+
+```{r}
+ID_r <- ID_v2 %>% filter(is.na(attend))
+rbind(NA_filtré = ID_r[,c(13,22:23)] %>% is.na() %>% colSums(),NA_N_filtré = ID_v2[,c(13,22:23)] %>% is.na() %>% colSums())
+
+ID_v3 <- ID_v2 %>% filter(attend != "NA")
+```
+### Imputation des données manquantes de income
+
+```{r}
+n <- nrow(ID_v3) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_i <- ID_v3 %>% slice(train)
+dataTest_i <- ID_v3 %>% slice(-train)
+
+# induce some missing data at random
+set.seed(1)
+
+rec_i <- recipe(~ .,data = ID_v3) %>% 
+  step_impute_knn(income, neighbors = 5)
+
+rec_i_prep <- prep(rec_i, dataTrain_i)
+ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
+##################
+vis_miss(ID_v4)
+```
+
+### imputation de données manquantes de la variable *prestige*
+
+```{r}
+n <- nrow(ID_v4) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_p <- ID_v4 %>% slice(train)
+dataTest_p <- ID_v4 %>% slice(-train)
+
+rec_p <- recipe(~., data = ID_v4) %>% 
+  step_impute_knn(prestige, neighbors = 5)
+
+rec_p_prep <- prep(rec_p, training = dataTrain_p)
+ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
+
+##############
+
+vis_miss(ID_v5)
+```
+
+### imputation de données manquantes de la variable *tvhours*
+
+```{r}
+n <- nrow(ID_v5) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_tv <- ID_v5 %>% slice(train)
+dataTest_tv <- ID_v5 %>% slice(-train)
+
+rec_tv <- recipe(~., data = ID_v5) %>% 
+  step_impute_knn(tvhours, neighbors = 5)
+
+rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)
+ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
+
+##############
+
+vis_miss(ID_v6)
+```
+
+### imputation de données manquantes de la variable *owngun*
+
+```{r}
+n <- nrow(ID_v6) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_g <- ID_v6 %>% slice(train)
+dataTest_g <- ID_v6 %>% slice(-train)
+
+rec_g <- recipe(~., data = ID_v6) %>% 
+  step_impute_knn(owngun, neighbors = 5) %>% 
+  step_mutate(owngun = round(owngun))
+
+rec_g_prep <- prep(rec_g, training = dataTrain_g)
+ID_v7 <- bake(rec_g_prep, new_data = ID_v6)
+
+##############
+
+vis_miss(ID_v7)
+```
+
+### imputation de données manquantes de la variable *unem10*
+
+```{r}
+n <- nrow(ID_v7) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_u <- ID_v7 %>% slice(train)
+dataTest_u <- ID_v7 %>% slice(-train)
+
+rec_u <- recipe(~., data = ID_v7) %>% 
+  step_impute_knn(unem10, neighbors = 5) %>% 
+  step_mutate(unem10 = round(unem10))
+
+rec_u_prep <- prep(rec_u, training = dataTrain_u)
+ID_v8 <- bake(rec_u_prep, new_data = ID_v7)
+
+##############
+
+vis_miss(ID_v8)
+```
+
+
+### imputation de données manquantes de la variable *widowed*
+
+```{r}
+n <- nrow(ID_v8) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_w <- ID_v8 %>% slice(train)
+dataTest_w <- ID_v8 %>% slice(-train)
+
+rec_w <- recipe(~., data = ID_v8) %>% 
+  step_impute_knn(widowed, neighbors = 5) %>% 
+  step_mutate(widowed = round(widowed))
+
+rec_w_prep <- prep(rec_w, training = dataTrain_w)
+ID_v9 <- bake(rec_w_prep, new_data = ID_v8)
+
+##############
+
+vis_miss(ID_v9)
+```
+### imputation de données manquantes de la variable *divorce*
+
+```{r}
+n <- nrow(ID_v9) #taille de la data
+N <- round(2/3*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+dataTrain_d <- ID_v9 %>% slice(train)
+dataTest_d <- ID_v9 %>% slice(-train)
+
+rec_d <- recipe(~., data = ID_v9) %>% 
+  step_impute_knn(divorce, neighbors = 5) %>% 
+  step_mutate(divorce = round(divorce))
+
+rec_d_prep <- prep(rec_d, training = dataTrain_d)
+ID_v10 <- bake(rec_d_prep, new_data = ID_v9)
+
+##############
+
+vis_miss(ID_v10)
+```
+
+### Elimination NA
+
+```{r}
+ID_vf <- ID_v10 %>% filter(complete.cases(.))
+vis_miss(ID_vf)
+```
+
+```{r}
+summary(ID_vf)
+```
+
