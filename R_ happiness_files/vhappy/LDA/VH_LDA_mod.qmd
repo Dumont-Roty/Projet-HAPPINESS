@@ -19,8 +19,7 @@ library(pROC)
 library(kknn)
 ```
 
-# Importation des données v1
-
+# Importation des données
 
 ```{r}
 #| label: Package de données
@@ -29,7 +28,7 @@ library(wooldridge)
 data("happiness") #base de données
 
 
-ID_v1 <- happiness[, c(1:19,21,33)] %>%
+ID_v1 <- happiness[, c(1:13,15:19,21,33)] %>%
   mutate(
     divorce = case_when(
       divorce == "yes" ~ "yes",
@@ -42,6 +41,13 @@ ID_v1 <- happiness[, c(1:19,21,33)] %>%
       widowed == "iap" ~ "iap",
       widowed == "no" ~ "no",
       is.na(widowed) ~ "NA"
+    ),
+    DivWid = case_when(
+      divorce == "yes" | widowed == "yes" ~ "yes",
+      divorce == "no" & widowed == "iap" ~ "no",
+      TRUE ~ "NA"
+    ),
+    kids = rowSums(across(c(babies, preteen, teens)), na.rm = TRUE
     ),
     owngun = case_when(
       owngun == "yes" ~ "yes",
@@ -80,32 +86,30 @@ ID_v1 <- happiness[, c(1:19,21,33)] %>%
     widowed = as.factor(widowed),
     educ = as.numeric(educ),
     reg16 = as.factor(reg16),
-    babies = as.numeric(babies),
-    preteen = as.numeric(preteen),
-    teens = as.numeric(teens),
+    #babies = as.numeric(babies),
+    #preteen = as.numeric(preteen),
+    #teens = as.numeric(teens),
     income = as.factor(income),
     region = as.factor(region),
     attend = as.numeric(attend),
-    happy = as.factor(happy),
     owngun = as.factor(owngun),
     tvhours = as.numeric(tvhours),
     vhappy = as.factor(vhappy),
     mothfath16 = as.logical(mothfath16),
     black = as.logical(black),
     female = as.logical(female),
-    unem10 = as.factor(unem10)
+    unem10 = as.factor(unem10),
+    DivWid = as.factor(DivWid),
+    kids = as.numeric(kids)
   )
-```
 
-### Enfants / pré-ados / ados v2
+### Divorce / veufs / Enfants / pré-ados / ados
 
-```{r}
-ID_v2 <- ID_v1 %>% filter(babies != "NA")
-```
+ID_v2 <- ID_v1[,-c(4:5,8:10)]
+
 
 ### imputation de données manquantes de la variable *attend*
 
-```{r}
 n <- nrow(ID_v2) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -117,11 +121,10 @@ rec_att <- recipe(~., data = ID_v2) %>%
 
 rec_att_prep <- prep(rec_att, training = dataTrain_att)
 ID_v3 <- bake(rec_att_prep, new_data = ID_v2)
-```
+
 
 ### Imputation des données manquantes de income
 
-```{r}
 n <- nrow(ID_v3) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -136,11 +139,10 @@ rec_i <- recipe(~ .,data = ID_v3) %>%
 
 rec_i_prep <- prep(rec_i, dataTrain_i)
 ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
-```
+
 
 ### imputation de données manquantes de la variable *prestige*
 
-```{r}
 n <- nrow(ID_v4) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -152,21 +154,19 @@ rec_p <- recipe(~., data = ID_v4) %>%
 
 rec_p_prep <- prep(rec_p, training = dataTrain_p)
 ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
-ID_v5$prestige <- round(ID_v5$prestige,0)
-```
+
 
 ### Nettoyage des valeurs aberrantes
 
-```{r}
 #ID_v5 <- ID_v5[ID_v5$tvhours != 24, ] si aberrant car 4 ont mis + de 24h
 # Est ce qu'on retire tout ceux au dessus de 18h ?
 # ID_v5 <- ID_v5[ID_v5$babies != 6, ]
 # 1 personne à 6 bébé l'autre max est à 4
-```
+
 
 ### imputation de données manquantes de la variable *tvhours*
 
-```{r}
+
 n <- nrow(ID_v5) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -178,23 +178,19 @@ rec_tv <- recipe(~., data = ID_v5) %>%
 
 rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)
 ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
-```
 
-## Suppression des modalités vide
-```{r}
-ID_v6$happy <- droplevels(ID_v6$happy)
+# Suppression des modalités vide
 # J'ai supprimé les individus à qui il restait une MDA
 ID_v6 <- na.omit(ID_v6)
 ```
-
 
 # Echantillonage 
 
 ```{r}
 set.seed(1)
-split_dat <- initial_split(ID_v6, prop = 0.75, strata = vhappy) # classique 3 quart / 1 quart
-dat_train <- training(split_dat)
-data_test <- testing(split_dat)
+split_dat <- initial_split(ID_v6, prop = 0.75, strata = vhappy)
+dat_train <- training(split_dat) # 3/4
+data_test <- testing(split_dat) # 1/4
 ```
 
 ## Construction des différents modèles
@@ -212,10 +208,14 @@ lda_mod <- discrim_linear() |>
 ### recette à appliquer 
 
 ```{r}
-dat_rec <- dat_train |> recipe(vhappy~educ+attend+tvhours) #TROP LOOOOOOOOOOOONG
+# dat_rec <- dat_train |> recipe(vhappy~educ+kids+tvhours) #TROP LOOOOOOOOOOOONG
 
-#dat_rec <- dat_train |> recipe(vhappy~workstat+prestige+divorce+educ+income+attend+tvhours+female)
-# la recette est d'expliquer vhappy en fonction de toute les autres variables
+dat_rec <- dat_train  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
 ```
 
 ```{r}

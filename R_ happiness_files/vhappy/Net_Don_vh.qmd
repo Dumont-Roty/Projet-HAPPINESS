@@ -20,9 +20,9 @@ library(dplyr)
 
 # Importation des données v1
 
-
 ```{r}
 #| label: Package de données
+set.seed(1)
 
 library(wooldridge)
 data("happiness") #base de données
@@ -103,22 +103,13 @@ ID_v1 <- happiness[, c(1:13,15:19,21,33)] %>%
     unem10 = as.factor(unem10)
   )
 
-ID_v1 <- ID_v1[,-c(4:5,8:10)]
-```
+### Divorce / veufs / Enfants / pré-ados / ados
 
-```{r}
-vis_miss(ID_v1)
-```
+ID_v2 <- ID_v1[,-c(4:5,8:10)]
 
-### Enfants / pré-ados / ados v2
-
-```{r}
-ID_v2 <- ID_v1 %>% filter(kids != "NA")
-```
 
 ### imputation de données manquantes de la variable *attend*
 
-```{r}
 n <- nrow(ID_v2) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -131,35 +122,24 @@ rec_att <- recipe(~., data = ID_v2) %>%
 rec_att_prep <- prep(rec_att, training = dataTrain_att)
 ID_v3 <- bake(rec_att_prep, new_data = ID_v2)
 
-##############
-
-vis_miss(ID_v3)
-```
 
 ### Imputation des données manquantes de income
 
-```{r}
 n <- nrow(ID_v3) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
 dataTrain_i <- ID_v3 %>% slice(train)
 dataTest_i <- ID_v3 %>% slice(-train)
 
-# induce some missing data at random
-set.seed(1)
-
 rec_i <- recipe(~ .,data = ID_v3) %>% 
   step_impute_knn(income, neighbors = 5)
 
 rec_i_prep <- prep(rec_i, dataTrain_i)
 ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
-##################
-vis_miss(ID_v4)
-```
+
 
 ### imputation de données manquantes de la variable *prestige*
 
-```{r}
 n <- nrow(ID_v4) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -172,28 +152,18 @@ rec_p <- recipe(~., data = ID_v4) %>%
 rec_p_prep <- prep(rec_p, training = dataTrain_p)
 ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
 
-##############
-
-vis_miss(ID_v5)
-```
 
 ### Nettoyage des valeurs aberrantes
 
-```{r}
 #ID_v5 <- ID_v5[ID_v5$tvhours != 24, ] si aberrant car 4 ont mis + de 24h
 # Est ce qu'on retire tout ceux au dessus de 18h ?
 # ID_v5 <- ID_v5[ID_v5$babies != 6, ]
 # 1 personne à 6 bébé l'autre max est à 4
-```
-
-```{r}
-table(ID_v5$tvhours)
-```
 
 
 ### imputation de données manquantes de la variable *tvhours*
 
-```{r}
+
 n <- nrow(ID_v5) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
@@ -206,22 +176,8 @@ rec_tv <- recipe(~., data = ID_v5) %>%
 rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)
 ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
 
-##############
-
-vis_miss(ID_v6)
-```
-
-
-```{r}
-summary(ID_v6)
-```
 # Suppression des modalités vide
-```{r}
 # J'ai supprimé les individus à qui il restait une MDA
 ID_v6 <- na.omit(ID_v6)
-```
-
-```{r}
-vis_miss(ID_v6)
 ```
 
