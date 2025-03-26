@@ -1,0 +1,243 @@
+---
+title: "Net_Don_Happiness"
+format: html
+embed-resources: true
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+library(dplyr)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(doParallel)
+```
+
+# Importation des données
+
+```{r}
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+```
+# Echantillonage
+
+```{r}
+set.seed(1)
+
+data_split <- data |> initial_split(prop = 2/3)
+
+test_data <- data_split |> testing()
+train_data <- data_split |> training()
+```
+
+
+# Premier arbre
+```{r}
+control.max <- rpart.control(cp = 0, max.depth = 0, minbucket = 1, minsplit = 1)
+tree <- rpart(vhappy~.,data = train_data, control = control.max,
+              parms = list(split = "information"))
+```
+
+Pas d'erreur en apprentissage
+
+```{r}
+pred.tree <- predict(tree, newdata = train_data, type = "class")
+table(summary(pred.tree),summary(train_data[,10]))
+```
+Erreur de test 
+
+```{r}
+pred.tree <- predict(tree, newdata = test_data, type = "class")
+table(pred.tree, test_data$vhappy) # Species est la 5 eme colonne de test_data
+```
+```{r}
+mean(pred.tree != test_data$vhappy) # La 5eme collone de test_data est Species
+```
+Nous avons 41.64% de mal classé
+
+# Elague
+
+```{r}
+# Graphique de cout de complexité
+plotcp(tree)
+```
+
+On ne 
+
+```{r}
+tree$cptable
+```
+0.0035958288
+
+```{r}
+# cp_choisie à définir
+cp_choisie <- sqrt(0.0035958288*0.0022773583) # moyenne géométrique des valeurs de 2 et 3 feuilles
+
+treebis <- prune(tree, cp = cp_choisie) # en élaguant un arbre existant
+```
+```{r}
+control.prune <- rpart.control(cp = cp_choisie, max.depth = 0, 
+                               minbucket = 1, minsplit = 1)
+treeter <- rpart(vhappy~. , data = train_data, control = control.prune,
+            parms = list(split = "information"))
+```
+
+```{r}
+prp(treebis, type = 1, extra = 1, split.box.col = "lightblue", cex = 0.6) # extra permet la création de feuille homogène.
+```
+
+```{r}
+mean(predict(treebis, newdata = train_data, type = "class") != train_data$vhappy)
+```
+
+```{r}
+pred.tree <- predict(treebis, newdata = test_data, type = "class")
+table(pred.tree, test_data$vhappy)
+mean(pred.tree != test_data$vhappy)
+```
+# tidy models
+
+```{r}
+split_data <- initial_split(data, prop = 0.75, strata = vhappy) # STRATA permet de garder la meme proportion de chacune des modalites de la variable spécifié. Dans le découpage on ne déséquilibre pas la modalité de la variable à predire. Surtout important quand il y des données desequilibré
+data_train <- training(split_data)
+data_test <- testing(split_data)
+```
+
+```{r}
+rec <- recipe(vhappy ~ ., data = data_train)
+tree_spec <- decision_tree() |> 
+  set_engine("rpart") |> 
+  set_mode("classification")
+```
+
+```{r}
+n_core <- detectCores(logical = TRUE)
+registerDoParallel(cores = n_core - 1)
+
+# workflow avec paramètres à choisir
+tune_tree_wf <- workflow() |> 
+  add_model(tree_spec |> 
+              set_args(cost_complexity = tune()) # les arguments sont soit une valeurs soit etre optimisé
+            ) |>
+  add_recipe(rec)
+# création des échantillons de validation croisée
+data_cv <- vfold_cv(data_train) # on peut recommencer la VC pour solidifier le test
+# valeurs à tester
+cost_complexity_grid <- grid_regular(cost_complexity(range = c(-5,-0.1)), # Pas du vrai CART, on spécifie les valeurs à tester. Elles vont de 10^-5 à l'extremité proche du nombre entier
+                                     levels = 15)
+#on a créée une grille de 15 niveau de cout de complexité
+tree_tune_res <- tune_grid(
+  tune_tree_wf, # le workflow
+  resamples = data_cv, # les échantillons de validation croisée
+  grid = cost_complexity_grid, # la grille des valeurs à tester
+  metrics = metric_set(accuracy) # la métrique pour choisir la meilleur valeur
+)
+
+autoplot(tree_tune_res)
+
+stopImplicitCluster()
+```
+
+```{r}
+tree_tune_res |> show_best(metric = "accuracy")
+```
+
+```{r}
+best_cost_complexity <- select_best(tree_tune_res, metric = "accuracy")
+
+final_tune_tree_wf <- tune_tree_wf |> 
+  finalize_workflow(best_cost_complexity)
+```
+
+```{r}
+tree_fit <- final_tune_tree_wf |> last_fit(split_data)
+tree_fit |> collect_metrics() 
+```
+
+```{r}
+tree_fit |> collect_predictions() 
+```
+
+```{r}
+tree_fit |> collect_predictions() |> roc_curve(vhappy, .pred_no) |> autoplot()
+
+tree_preds <- tree_fit |> collect_predictions()
+
+# Vérifie que 'vhappy' est bien un facteur
+tree_preds <- tree_preds |> mutate(vhappy = as.factor(vhappy))
+
+# Courbe ROC et AUC
+roc_curve(tree_preds, truth = vhappy, .pred_no) |> 
+  autoplot()
+
+roc_auc(tree_preds, truth = vhappy, .pred_no)
+```
+Il y aurait une air sous la courbe de 64.3%
+
+```{r}
+tree_fit |> 
+  extract_fit_engine() |> 
+  rpart.plot::prp(type = 0, extra = 1, split.box.col = "lightblue",
+                  roundint = FALSE)
+```
+
+```{r}
+final_model <-  final_tune_tree_wf |> 
+  fit(data) # données complètes
+```
+```{r}
+save(final_model, file = "model_v1.RData")
+```
+
+
+# Données à prédire 
+
+## Intégration des données 
+
+```{r}
+a_predire <- data.frame(
+    year = c(1994,1998,2004),
+    workstat = c("retired","keeping house","other"),
+    prestige = c(12,54,32),
+    DivWid = c("yes","no","yes"),
+    educ = c(7,16,11),
+    kids = c(0,3,5),
+    income = c("$10000 - 14999","$25000 or more","lt $1000"),
+    region = c("new england","w. sou. central","	
+pacific"),
+    attend = c(6,30,104),
+    owngun = c("iap","yes","NA"),
+    tvhours = c(1,4,9),
+    vhappy = c("yes","no","yes"),
+    mothfath16 = c(FALSE,TRUE,TRUE),
+    black = c(TRUE,FALSE,TRUE),
+    female = c(TRUE,TRUE,FALSE),
+    unem10 = c("no","yes","NA")
+)
+```
+
+
+## Chargement du modèle 
+
+```{r}
+# chargement du modèle
+load("model_v1.RData")
+# cette commande créera un objet du même nom qu'au départ
+predict(final_model, new_data = a_predire) # par défaut type = "class"
+```
+
+```{r}
+predict(final_model, new_data = a_predire, type = "prob")
+```
+

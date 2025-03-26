@@ -1,14 +1,8 @@
----
-title: "LDA / QDA Very Happiness"
-format: html
-embed-resources: true
----
-
+####################
 # Packages
 
-```{r}
-#| label: importation des packages
-set.seed(123)
+set.seed(1)
+library(wooldridge)
 library(tidyverse)
 library(tidymodels)
 library(discrim)
@@ -17,15 +11,14 @@ library(recipes)
 library(MASS) #Modélisation LDA/QDA
 library(pROC)
 library(kknn)
-```
+library(doParallel)
+library(e1071)
 
+###################
 # Importation des données
 
-```{r}
-#| label: Package de données
-
-library(wooldridge)
 data("happiness") #base de données
+
 
 ID_v1 <- happiness[, c(1:13,15:19,21,33)] %>%
   mutate(
@@ -81,12 +74,12 @@ ID_v1 <- happiness[, c(1:13,15:19,21,33)] %>%
     year = as.factor(year),
     workstat = as.factor(workstat),
     prestige = as.numeric(prestige),
-    DivWid = as.factor(DivWid),
+    DivWid = as.factor(DivWid),   #
     divorce = as.factor(divorce),
     widowed = as.factor(widowed),
     educ = as.numeric(educ),
     reg16 = as.factor(reg16),
-    kids = as.numeric(kids),
+    kids = as.numeric(kids),    #
     #babies = as.numeric(babies),
     #preteen = as.numeric(preteen),
     #teens = as.numeric(teens),
@@ -105,7 +98,6 @@ ID_v1 <- happiness[, c(1:13,15:19,21,33)] %>%
 ### Divorce / veufs / Enfants / pré-ados / ados
 
 ID_v2 <- ID_v1[,-c(4:5,8:10)]
-
 
 ### imputation de données manquantes de la variable *attend*
 
@@ -130,11 +122,15 @@ train <- sample(1:n, size = N) # découpage de la data train
 dataTrain_i <- ID_v3 %>% slice(train)
 dataTest_i <- ID_v3 %>% slice(-train)
 
+# induce some missing data at random
+set.seed(1)
+
 rec_i <- recipe(~ .,data = ID_v3) %>% 
   step_impute_knn(income, neighbors = 5)
 
 rec_i_prep <- prep(rec_i, dataTrain_i)
 ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
+
 
 ### imputation de données manquantes de la variable *prestige*
 
@@ -150,6 +146,7 @@ rec_p <- recipe(~., data = ID_v4) %>%
 rec_p_prep <- prep(rec_p, training = dataTrain_p)
 ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
 
+
 ### Nettoyage des valeurs aberrantes
 
 #ID_v5 <- ID_v5[ID_v5$tvhours != 24, ] si aberrant car 4 ont mis + de 24h
@@ -157,7 +154,9 @@ ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
 # ID_v5 <- ID_v5[ID_v5$babies != 6, ]
 # 1 personne à 6 bébé l'autre max est à 4
 
+
 ### imputation de données manquantes de la variable *tvhours*
+
 
 n <- nrow(ID_v5) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
@@ -174,57 +173,42 @@ ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
 # Suppression des modalités vide
 # J'ai supprimé les individus à qui il restait une MDA
 ID_v6 <- na.omit(ID_v6)
-```
 
-# Echantillonage 
+###########################
+#Echantillonage
 
-```{r}
 set.seed(1)
 split_dat <- initial_split(ID_v6, prop = 0.75, strata = vhappy) # classique 3 quart / 1 quart
-dat_train <- training(split_dat)
+data_train <- training(split_dat)
 data_test <- testing(split_dat)
-```
 
-## Construction des différents modèles
+######################
+n_core <- parallel::detectCores(logical = TRUE)
+registerDoParallel(core = n_core -1)
 
-### Définition des modèles :
-
-```{r}
-#| label: Définition du modèle QDA
-
-qda_mod <- discrim_quad() |> 
+svm_linear_spec <- svm_poly(degree = 1) |> 
   set_mode("classification") |> 
-  set_engine("MASS")
-```
+  set_engine("kernlab")
 
-### recette à appliquer 
+svm_linear_fit <- svm_linear_spec |> 
+ set_args(cost=5) |> 
+ fit(vhappy~.,data=ID_v6)
 
-```{r}
-dat_rec <- dat_train  %>% recipe(vhappy~.) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-# step_dummy(all_nominal_predictors()) %>% 
-  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
-  step_zv(all_predictors()) %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.9)
-```
+svm_linear_wf <- workflow() |> 
+  add_model(svm_linear_fit |> set_args(cost=tune())) |> 
+  add_formula(vhappy~.)
 
-```{r}
-qda_wf <- workflow() |> 
-  add_model(qda_mod) |> 
-  add_recipe(dat_rec)
-```
+data_fold <- vfold_cv(data_train, v=5, strata = vhappy)
 
-```{r}
-qda_fit <- qda_wf |> fit(data = dat_train) #entrainement du modèle en fonction du workflow et par rapport à la data d'entrainement
+svm_grid <- grid_regular(cost(),levels = 5)
 
-qda_preds <- predict(qda_fit, new_data = data_test, type = "prob") #predit la data_test grâce aux données d'entrainements
+tune.res <- tune_grid( 
+  svm_linear_wf,
+  resamples = data_fold,
+  grid = svm_grid
+)
 
-qda_result <- bind_cols(data_test, qda_preds)
-```
+autoplot(tune.res)
 
-```{r}
-qda_result |> roc_curve(vhappy, .pred_yes) |> autoplot()
-roc(data_test$vhappy, qda_result$.pred_yes) %>% auc()
-```
+stopImplicitCluster()
 
-Si proche de la bissectrice, le hasard est aussi bon que le modèle.

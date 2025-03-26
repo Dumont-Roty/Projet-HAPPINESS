@@ -1,0 +1,96 @@
+---
+title: "LDA / QDA Very Happiness"
+format: html
+embed-resources: true
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(123)
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(kableExtra)
+library(recipes)
+library(MASS) #Modélisation LDA/QDA
+library(pROC)
+library(kknn)
+```
+
+# Importation des données
+
+```{r}
+ID_v6 <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+ID_v6 <- ID_v6 %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+ID_v6 <- ID_v6 %>% mutate(across(where(is.character), as.factor))
+```
+
+
+# Echantillonage 
+
+```{r}
+set.seed(1)
+split_dat <- initial_split(ID_v6, prop = 0.75, strata = vhappy)
+dat_train <- training(split_dat) # 3/4
+data_test <- testing(split_dat) # 1/4
+```
+
+## Construction des différents modèles
+
+### Définition des modèles :
+
+```{r}
+#| label: Définition du modèle LDA 
+
+lda_mod <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+```
+
+### recette à appliquer 
+
+```{r}
+# dat_rec <- dat_train |> recipe(vhappy~educ+kids+tvhours) #TROP LOOOOOOOOOOOONG
+
+dat_rec <- dat_train  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
+```
+
+```{r}
+lda_wf <- workflow() |> 
+  add_model(lda_mod) |> 
+  add_recipe(dat_rec)
+```
+
+
+### Grille pour tester les hyper paramètres
+
+Les paramètres sont optimisés on peut maintenant faire travailler les modèles sur les données d'apprentissage et comparer les qualités des modèles sur les données test.
+
+```{r}
+collect <- function(x){
+  last_fit(x,split = split_dat) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
+    collect_predictions()
+}
+
+lda_result <- lda_wf |> collect()
+```
+
+On va construitre un tableau qui continent les résultats pour chaque individus de la base de donnée testing, en fonctioon de la méthode utilisé
+Pour chasue individu : - résultat, -méthode utilisé
+
+Comparons les modèles :
+
+```{r}
+lda_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+roc(data_test$vhappy, lda_result$.pred_no) %>% auc()
+```
+Si proche de la bissectrice, le hasard est aussi bon que le modèle.
+
