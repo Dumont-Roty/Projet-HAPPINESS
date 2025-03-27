@@ -18,171 +18,12 @@ library(MASS) #Modélisation LDA/QDA
 library(pROC)
 ```
 
-# Importation des données v1
-
-
 ```{r}
-#| label: Package de données
+ID_v6 <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+ID_v6 <- ID_v6 %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+ID_v6 <- ID_v6 %>% mutate(across(where(is.character), as.factor))
 
-library(wooldridge)
-data("happiness") #base de données
-
-
-ID_v1 <- happiness[, c(1:19,21,33)] %>%
-  mutate(
-    divorce = case_when(
-      divorce == "yes" ~ "yes",
-      divorce == "no" ~ "no",
-      divorce == "iap" ~ "iap",
-      is.na(divorce) ~ "NA"
-    ),
-    widowed = case_when(
-      widowed == "yes" ~ "yes",
-      widowed == "iap" ~ "iap",
-      widowed == "no" ~ "no",
-      is.na(widowed) ~ "NA"
-    ),
-    owngun = case_when(
-      owngun == "yes" ~ "yes",
-      owngun == "iap" ~ "iap",
-      owngun == "no" ~ "no",
-      is.na(owngun) ~ "NA"
-    ),
-    vhappy = case_when(
-      vhappy == "1" ~ "yes",
-      vhappy == "0" ~ "no",
-      is.na(vhappy) ~ "NA"
-    ),
-    unem10 = case_when(
-      unem10 == "1" ~ "yes",
-      unem10 == "0" ~ "no",
-      is.na(unem10) ~ "NA"
-    ),
-    attend = case_when(
-      attend == "never" ~ "0",
-      attend == "lt once a year" ~ "0.5",
-      attend == "once a year" ~ "1",
-      attend == "sevrl times a yr" ~ "6",
-      attend == "once a month" ~ "12",
-      attend == "2-3x a month" ~ "30",
-      attend == "nrly every week" ~ "42",
-      attend == "every week" ~ "52",
-      attend == "more thn once wk" ~ "104",
-      is.na(attend) ~ "NA"
-    ),
-  ) %>%
-  mutate(
-    year = as.factor(year),
-    workstat = as.factor(workstat),
-    prestige = as.numeric(prestige),
-    divorce = as.factor(divorce),
-    widowed = as.factor(widowed),
-    educ = as.numeric(educ),
-    reg16 = as.factor(reg16),
-    babies = as.numeric(babies),
-    preteen = as.numeric(preteen),
-    teens = as.numeric(teens),
-    income = as.factor(income),
-    region = as.factor(region),
-    attend = as.numeric(attend),
-    happy = as.factor(happy),
-    owngun = as.factor(owngun),
-    tvhours = as.numeric(tvhours),
-    vhappy = as.factor(vhappy),
-    mothfath16 = as.logical(mothfath16),
-    black = as.logical(black),
-    female = as.logical(female),
-    unem10 = as.factor(unem10)
-  )
-```
-
-### Enfants / pré-ados / ados v2
-
-```{r}
-ID_v2 <- ID_v1 %>% filter(babies != "NA")
-```
-
-### imputation de données manquantes de la variable *attend*
-
-```{r}
-n <- nrow(ID_v2) #taille de la data
-N <- round(2/3*n) # Taille de l'échantillon d'entrainement
-train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_att <- ID_v2 %>% slice(train)
-dataTest_att <- ID_v2 %>% slice(-train)
-
-rec_att <- recipe(~., data = ID_v2) %>% 
-  step_impute_knn(attend, neighbors = 5)
-
-rec_att_prep <- prep(rec_att, training = dataTrain_att)
-ID_v3 <- bake(rec_att_prep, new_data = ID_v2)
-```
-
-### Imputation des données manquantes de income
-
-```{r}
-n <- nrow(ID_v3) #taille de la data
-N <- round(2/3*n) # Taille de l'échantillon d'entrainement
-train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_i <- ID_v3 %>% slice(train)
-dataTest_i <- ID_v3 %>% slice(-train)
-
-# induce some missing data at random
-set.seed(1)
-
-rec_i <- recipe(~ .,data = ID_v3) %>% 
-  step_impute_knn(income, neighbors = 5)
-
-rec_i_prep <- prep(rec_i, dataTrain_i)
-ID_v4 <- bake(rec_i_prep, new_data = ID_v3)
-```
-
-### imputation de données manquantes de la variable *prestige*
-
-```{r}
-n <- nrow(ID_v4) #taille de la data
-N <- round(2/3*n) # Taille de l'échantillon d'entrainement
-train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_p <- ID_v4 %>% slice(train)
-dataTest_p <- ID_v4 %>% slice(-train)
-
-rec_p <- recipe(~., data = ID_v4) %>% 
-  step_impute_knn(prestige, neighbors = 5)
-
-rec_p_prep <- prep(rec_p, training = dataTrain_p)
-ID_v5 <- bake(rec_p_prep, new_data = ID_v4)
-ID_v5$prestige <- round(ID_v5$prestige,0)
-```
-
-### Nettoyage des valeurs aberrantes
-
-```{r}
-#ID_v5 <- ID_v5[ID_v5$tvhours != 24, ] si aberrant car 4 ont mis + de 24h
-# Est ce qu'on retire tout ceux au dessus de 18h ?
-# ID_v5 <- ID_v5[ID_v5$babies != 6, ]
-# 1 personne à 6 bébé l'autre max est à 4
-```
-
-### imputation de données manquantes de la variable *tvhours*
-
-```{r}
-n <- nrow(ID_v5) #taille de la data
-N <- round(2/3*n) # Taille de l'échantillon d'entrainement
-train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_tv <- ID_v5 %>% slice(train)
-dataTest_tv <- ID_v5 %>% slice(-train)
-
-rec_tv <- recipe(~., data = ID_v5) %>% 
-  step_impute_knn(tvhours, neighbors = 5)
-
-rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)
-ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
-```
-
-## Suppression des modalités vide
-```{r}
-ID_v6$happy <- droplevels(ID_v6$happy)
-# J'ai supprimé les individus à qui il restait une MDA
 ID_v6 <- na.omit(ID_v6)
 ```
 
@@ -209,7 +50,7 @@ lda_spec <- discrim_linear() |>
   set_engine("MASS")
 
 lda_fit <- lda_spec |> 
-  fit(vhappy ~ prestige + educ + babies + preteen + teens + attend + tvhours,data = dataTrain)
+  fit(vhappy ~ .,data = dataTrain)
 ```
 
 ### Obtention de la matrice de confusion sur les données test
@@ -227,7 +68,7 @@ tab[[1]]%>%
  t()%>%
  addmargins()%>%
  as_tibble()%>%
- add_column(Réalité=c("Very Happy","Not very happy","Total"),.before=1)%>%rename("Very Happy"=V1,"Not very Happy"=V2,Total=Sum)%>%
+ add_column(Réalité=c("N vhappy","vhappy","Total"),.before=1)%>%rename("N vhappy"=V1,"vhappy"=V2,Total=Sum)%>%
  kable()%>%
  add_header_above(c("","Prédiction"=2,""))%>%
  column_spec(c(4),bold=T,background="#F4F6F6",width="2cm") %>%
@@ -250,7 +91,7 @@ qda_spec <- discrim_quad() |>
   set_engine("MASS")
 
 qda_fit <- qda_spec |> 
-  fit(vhappy ~ prestige + educ + babies + preteen + teens + attend + tvhours, data = dataTrain)
+  fit(vhappy ~ ., data = dataTrain)
 ```
 
 ### Obtention matrice de confusion sur les données test
@@ -267,7 +108,7 @@ tab[[1]]%>%
  t()%>%
  addmargins()%>%
  as_tibble()%>%
- add_column(Réalité=c("Very Happy","Not very Happy","Total"),.before=1)%>%rename("Very Happy"=V1,"Not very Happy"=V2,Total=Sum)%>%
+ add_column(Réalité=c("N vhappy","vhappy","Total"),.before=1)%>%rename("N vhappy"=V1,"vhappy"=V2,Total=Sum)%>%
  kable()%>%
  add_header_above(c("","Prédiction"=2,""))%>%
  column_spec(c(4),bold=T,background="#F4F6F6",width="2cm") %>%
@@ -326,7 +167,7 @@ round(predict(qda_fit, new_data = dataTest, type = "prob"),3)
 
 ```{r}
 #| label: seuil
-class20 <- ifelse(qda_predict$posterior[,2]>0.2, "yes", "no")  |>  as.factor()
+class20 <- ifelse(qda_predict$.pred_class>0.2, "yes", "no")  |>  as.factor()
 ```
 
 ```{r}

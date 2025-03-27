@@ -26,6 +26,8 @@ ID_v6 <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification su
                   na = c("", "NA"))
 ID_v6 <- ID_v6 %>% mutate(across(everything(), ~replace_na(.x, "NA")))
 ID_v6 <- ID_v6 %>% mutate(across(where(is.character), as.factor))
+#ID_v6$owngun <- NULL
+ID_v6 <- na.omit(ID_v6)
 ```
 
 
@@ -90,7 +92,11 @@ Comparons les modèles :
 
 ```{r}
 lda_result |> roc_curve(vhappy, .pred_no) |> autoplot()
-roc(data_test$vhappy, lda_result$.pred_no) %>% auc()
+roc(data_test$vhappy, lda_result$.pred_no) %>% auc() #0.677
 ```
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
+
+```{r}
+save(lda_result, file = "model_LDA.RData")
+```
 

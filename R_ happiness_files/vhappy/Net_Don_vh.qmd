@@ -32,6 +32,8 @@ data("happiness") #base de données
 
 happiness0 <- happiness[, c(1:6,8:13,15:19,21,33)]
 
+happy <- happiness0[rowSums(is.na(happiness0)) <= 3, ]
+
 ID_v1 <- happy %>%
   mutate(
     divorce = case_when(
@@ -105,9 +107,6 @@ ID_v1 <- happy %>%
     female = as.logical(female),
     unem10 = as.factor(unem10)
   )
-
-
-ID_v1 <- ID_v1[rowSums(is.na(ID_v1)) <= 4, ]
 
 ### Divorce / veufs / Enfants / pré-ados / ados
 

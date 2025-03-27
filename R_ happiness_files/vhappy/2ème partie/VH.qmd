@@ -64,7 +64,7 @@ table(pred.tree, test_data$vhappy) # Species est la 5 eme colonne de test_data
 ```{r}
 mean(pred.tree != test_data$vhappy) # La 5eme collone de test_data est Species
 ```
-Nous avons 41.64% de mal classé
+Nous avons `r round(mean(pred.tree != test_data$vhappy),2)`% de mal classé
 
 # Elague
 

@@ -137,5 +137,7 @@ roc(data_test$vhappy, svm_lin_result$.pred_no) %>% auc()
 ```
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
 
-
+```{r}
+save(svm_lin_result, file = "model_svm_lin.RData")
+```
 

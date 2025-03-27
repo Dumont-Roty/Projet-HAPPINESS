@@ -136,3 +136,7 @@ svm_rad_result |> roc_curve(vhappy, .pred_no) |> autoplot()
 roc(data_test$vhappy, svm_rad_result$.pred_no) %>% auc()
 ```
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
+
+```{r}
+save(svm_rad_result, file = "model_svm_rad.RData")
+```
