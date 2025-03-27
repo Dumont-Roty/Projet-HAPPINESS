@@ -38,10 +38,10 @@ plot(res.mca, choix = "var")  # Graphique des variables
 
 # 10% de la data
 ```{r}
-n <- nrow(ID_v6) #taille de la data
-N <- round(1/2*n) # Taille de l'échantillon d'entrainement
-train <- sample(1:n, size = N) # découpage de la data train
-ID_v7 <- ID_v6 %>% slice(train)
+#n <- nrow(ID_v6) #taille de la data
+#N <- round(1/2*n) # Taille de l'échantillon d'entrainement
+#train <- sample(1:n, size = N) # découpage de la data train
+ID_v7 <- ID_v6 # %>% slice(train)
 ```
 
 # Echantillonage 
