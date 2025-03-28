@@ -1,0 +1,30 @@
+À quoi servent les différents arguments dans rpart.control ? Que signifie split = "information" ?
+
+- cout de complexité qui permet de prendre en compte la taille de l'arbre / on pénalise la taille de l'arbre 
+si cp = 0 on ne prend pas en compte la taille de l'arbre, donc on aura l'arbre le plus profond possible (le max)
+- minbucket : nombre d'observation après le split, sur les feuilles 
+- minsplit : le nombre minimale d'obsrevations qu'il doit y avoir dans un noeud, si il y a pas ce min d'individu dans le noeud on n'essaye pas de le redécouper 
+--> ici les deux à 1 pour avoir l'arbre le plus profond possible 
+l'algo peut garder en mémoire d'autre split quasi équivalent qui repose sur d'autres varaibles, sur d'autres règles --> "surrogate" par défaut il garde 5 surrogate  --< quel découpage est le plus proche que celui qui a été choisi
+maxcompete --> on garde d'autre découpage qui était presque aussi bon (pour maximiser l'hétérogénéité des noeuds) , permet de garder des variables intéressantes (d'autres découpages) même si pas choisis
+
+La commande rpart : 
+- la varaible que l'on cherche à exprimer en fonction de toutes les autres variables 
+- on donne la base de donnée : les données d'entrainement 
+- la construction de l'arbre doit etre controler par ce qu'on a définit dans control.max 
+- parms : "information" = entropy --> on utilise l'entropy pour faire le découpage (pour mesurer le meilleur découpage) --> on peut égalment aussi mettre l'indice de gini 
+On purait aussi mettre des poids sur les individus "weights" comme paramètre de la fonction rpart.
+On peut dire quoi faire avec les données manquantes "na.action"
+method = class --> pour dire qu'on fait de la classification
+cost : pour mettre un cout 
+
+Pour créer une grille de valeurs pour tune_grid(), il y a plusieurs méthodes :
+	-	à la main, l’objet doit être un data frame ou un tibble (mtry précédemment) ;
+	-	avec crossing() : on précise les valeurs pour les différents paramètres et la commande génère un tibble avec toutes les combinaisons possibles (expand_grid() => n’ordonne pas les valeurs; expand.grid() => data frame) ;
+
+trees() = par défaut dans tidymodels, le nombre d'arbre va de 1 à 2000
+min_n() = par défaut va de 2 à 40 
+mtry = prend une valeur de 1 à quelque chose 
+
+mean decrease accuracy
+mean decrease gini
