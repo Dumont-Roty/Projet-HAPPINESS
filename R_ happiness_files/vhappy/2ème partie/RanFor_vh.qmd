@@ -20,6 +20,11 @@ library(rsample)
 library(rpart)
 library(rpart.plot)
 library(doParallel)
+library(ggplot2)
+theme_set(theme_minimal())
+library(readr)
+library(randomForest)
+library(hardhat)
 ```
 
 # Importation des données
@@ -41,203 +46,373 @@ test_data <- data_split |> testing()
 train_data <- data_split |> training()
 ```
 
-
-# Premier arbre
-```{r}
-control.max <- rpart.control(cp = 0, max.depth = 0, minbucket = 1, minsplit = 1)
-tree <- rpart(vhappy~.,data = train_data, control = control.max,
-              parms = list(split = "information"))
-```
-
-Pas d'erreur en apprentissage
+# Random forest + bagging
 
 ```{r}
-pred.tree <- predict(tree, newdata = train_data, type = "class")
-table(summary(pred.tree),summary(train_data[,10]))
-```
-Erreur de test 
-
-```{r}
-pred.tree <- predict(tree, newdata = test_data, type = "class")
-table(pred.tree, test_data$vhappy) # Species est la 5 eme colonne de test_data
-```
-```{r}
-mean(pred.tree != test_data$vhappy) # La 5eme collone de test_data est Species
-```
-Nous avons `r round(mean(pred.tree != test_data$vhappy),2)`% de mal classé
-
-# Elague
-
-```{r}
-# Graphique de cout de complexité
-plotcp(tree)
-```
-
-On ne 
-
-```{r}
-tree$cptable
-```
-0.0035958288
-
-```{r}
-# cp_choisie à définir
-cp_choisie <- sqrt(0.0035958288*0.0022773583) # moyenne géométrique des valeurs de 2 et 3 feuilles
-
-treebis <- prune(tree, cp = cp_choisie) # en élaguant un arbre existant
-```
-```{r}
-control.prune <- rpart.control(cp = cp_choisie, max.depth = 0, 
-                               minbucket = 1, minsplit = 1)
-treeter <- rpart(vhappy~. , data = train_data, control = control.prune,
-            parms = list(split = "information"))
+rf <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  parms = list(split = "gini"), # paramètres
+  na.action = na.omit
+)
 ```
 
 ```{r}
-prp(treebis, type = 1, extra = 1, split.box.col = "lightblue", cex = 0.6) # extra permet la création de feuille homogène.
+nvar <- ncol(data) - 1
+bag <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  parms = list(split = "gini"), 
+  mtry = nvar, 
+  na.action = na.omit
+)
+#L'argument mtry permet de définir le nombre de variable aléatoire qui sont candidates pour les découpages.
+#Ici on a définit nvar commme le nombre de variable totale moins la variable à prédire (soit ici 13)
+```
+
+## Etude et optimisation manuelle
+
+### Observation des sorties des commandes
+
+*oob.times* *err.rates* *votes*
+
+```{r}
+rf$oob.times %>% head()
+
+head(rf$oob.times) # a peu prés 15% des individus ne sont pas choisis
 ```
 
 ```{r}
-mean(predict(treebis, newdata = train_data, type = "class") != train_data$vhappy)
+rf$err.rate %>% head()
+rf$err.rate %>% tail()
+```
+
+err.rate : taux d'erreur 
+On obtient l'erreur out-of-bag 
+-> chaque ligne correspond à l'erreur pour une forêt du nombre d'arbre correspondant à la ligne.
+On a également le taux d'erreur pour les modalités de la variable à prédire. Erreur de prédiction pour les individus du groupe No et du groupe Yes.
+
+-> ainsi on remarque qu'on fait plus d'erreur en mal classant les individus Yes
+
+```{r}
+rf$votes %>% head()
+```
+votes : quelle est la proportion d'arbres qui prédit No ou Yes pour un individu (un individu par ligne).
+Ex : l'individu 3 est prédit majoritairement No par les arbres.
+
+```{r}
+data.frame(nb_trees = 1:rf$ntree,
+           random_forest = rf$err.rate[,1],
+           bagging = bag$err.rate[,1]) %>% # on a construit un data frame qui contient le nombre d'arbre et les erreurs
+  tidyr::pivot_longer(cols = c(random_forest, bagging),
+                      names_to = "model", values_to = "OOB_error") %>% 
+  # pivot_longer premet de dire qu'on renvoit les valeurs de randomforest et bagging dans une variable qui s'appelle OOBerror et leur nom dans une variable qui s'apelle model
+  ggplot() + 
+  aes(x = nb_trees, y = OOB_error, col = model) +
+  geom_line() +
+  ylim(c(0, 0.45)) +
+  theme_minimal()
+```
+
+Les erreurs OBB pour les deux modèles sont assez proches. 
+Dans notre cas, le random forest est plus intéressant car on a plus d'arbre que le bagging
+
+```{r}
+data.frame(nb_trees = 1:rf$ntree,
+           random_forest = rf$err.rate[,2:3],
+           bagging = bag$err.rate[,2:3]) %>% 
+  tidyr::pivot_longer(cols = c(random_forest.no, random_forest.yes, bagging.no, bagging.yes),
+                      names_to = "model", values_to = "error") %>% 
+  ggplot() + 
+  aes(x = nb_trees, y = error, col = model) +
+  geom_line() +
+  ylim(c(0, 0.45)) +
+  theme_minimal()
+```
+
+Que sur le modèle random Forest : 
+```{r}
+data.frame(nb_trees = 1:rf$ntree,
+           All = rf$err.rate[,1],
+           No = rf$err.rate[,2],
+           Yes = rf$err.rate[,3]) %>% 
+  tidyr::pivot_longer(cols = c(All, No, Yes),
+                      names_to = "Type", values_to = "OOB_error") %>% 
+  ggplot() + 
+  aes(x = nb_trees, y = OOB_error, col = Type) +
+  geom_line() +
+  ylim(c(0, 0.45)) +
+  theme_minimal()
+
+table(data_train$vhappy)
+```
+
+4. Faire varier le nombre de variables choisies à chaque cission et visualiser les erreurs OOB.
+
+```{r}
+# plusieurs rf pour différentes valeurs de mtry
+rf1 <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  mtry =1,
+  parms = list(split = "gini"))
+rf3 <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  mtry =3,
+  parms = list(split = "gini"))
+rf5 <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  mtry =5,
+  parms = list(split = "gini"))
+rf7 <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  mtry =7,
+  parms = list(split = "gini"))
+rf9 <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  mtry =9,
+  parms = list(split = "gini"))
+rf13 <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", 
+  mtry =13,
+  parms = list(split = "gini"))
 ```
 
 ```{r}
-pred.tree <- predict(treebis, newdata = test_data, type = "class")
-table(pred.tree, test_data$vhappy)
-mean(pred.tree != test_data$vhappy)
+# représentation graphique des erreurs OOB 
+data.frame(nb_trees = 1:rf$ntree,
+           rf_1 = rf1$err.rate[,1],
+           rf_3 = rf3$err.rate[,1],
+           rf_5 = rf5$err.rate[,1],
+           rf_7 = rf7$err.rate[,1],
+           rf_9 = rf9$err.rate[,1],
+           rf_13 = rf13$err.rate[,1]) %>% 
+  tidyr::pivot_longer(cols = starts_with("rf"),
+                      names_to = "model", values_to = "OOB_error") %>% 
+  ggplot() + 
+  aes(x = nb_trees, y = OOB_error, col = model) +
+  geom_line() +
+  ylim(c(0.2, 0.45)) +
+  theme_minimal()
+
+# ici on fait des arbres très profond on n'a pas définit maxnoeud
 ```
-# tidy models
+
+5. Faire varier la profondeur des arbres construits (avec maxnodes) dans le modèle de bagging et visualiser les erreurs OOB.
 
 ```{r}
-split_data <- initial_split(data, prop = 0.75, strata = vhappy) # STRATA permet de garder la meme proportion de chacune des modalites de la variable spécifié. Dans le découpage on ne déséquilibre pas la modalité de la variable à predire. Surtout important quand il y des données desequilibré
-data_train <- training(split_data)
-data_test <- testing(split_data)
+### choix de profondeur en bagging
+errprofbag <- NULL
+prof <- c(2, 5, 10, 15, 20, 30, 40, 50, 100)
+i <- 1
+for (k in prof) {
+  rfprobag <- randomForest(vhappy ~ .,
+    data = train_data, method = "class", ntree = 200,
+    parms = list(split = "gini"), maxnodes = k, mtry = nvar, na.action = na.omit
+  )
+  errprofbag[i] <- rfprobag$err.rate[200, 1]
+  i <- i + 1
+}
 ```
 
 ```{r}
-rec <- recipe(vhappy ~ ., data = data_train)
-tree_spec <- decision_tree() |> 
-  set_engine("rpart") |> 
+data.frame(prof = prof, error = errprofbag) |> 
+  ggplot() + aes(x = prof, y = error) +
+  geom_line() + ylim(c(0.1, 0.35))
+```
+
+6. Faire la même chose pour les modèles de forêts aléatoires et visualiser les erreurs OOB.
+
+```{r}
+## choix de profondeur en rf
+errprofrf <- NULL
+i <- 1
+for (k in prof) {
+  rfpro <- randomForest(vhappy ~ .,
+    data = train_data, method = "class", ntree = 200, mtry = 2,
+    parms = list(split = "gini"), maxnodes = k, na.action = na.omit
+  )
+  errprofrf[i] <- rfpro$err.rate[200, 1]
+  i <- i + 1
+}
+```
+
+```{r}
+data.frame(prof = prof, error_bag = errprofbag, error_rf = errprofrf) |> 
+  ggplot() + aes(x = prof, y = error_rf) +
+  geom_line() + ylim(c(0.1, 0.35))
+```
+
+```{r}
+data.frame(prof = prof, error_bag = errprofbag, error_rf = errprofrf) |> 
+  tidyr::pivot_longer(cols = starts_with("err"), names_to = "model", values_to = "error") |> 
+  ggplot() + aes(x = prof, y = error, col = model) +
+  geom_line()  + ylim(c(0.1, 0.35))
+```
+
+
+7. Récupérer la taille de forêt minimisant l’erreur OOB.
+
+8. On s’intéresse maintenant aux variables les plus importantes dans la construction des arbres. Pour obtenir cela effectuer les commandes suivantes.
+
+```{r}
+# importance des variables
+rf <- randomForest(vhappy ~ .,
+   data = train_data, method = "class", ntree = 200, mtry = 2,
+   parms = list(split = "gini"), na.action = na.omit,
+   keep.forest = FALSE, 
+   importance = TRUE) # on spécfice au moment de la construction de la forêt 
+
+lobstr::obj_size(rf)
+# tout FALSE : 45kB, avec importance : 46kB
+# avec forêt : environ 500kB
+
+rf <- randomForest(vhappy ~ .,
+  data = train_data, method = "class", ntree = 200, mtry = 6,
+  parms = list(split = "gini"), na.action = na.omit,
+  keep.forest = TRUE, importance = TRUE
+)
+
+lobstr::obj_size(rf)
+# il faut avoir précisé importance=TRUE lors de la construction de la forêt
+importance(rf) %>% head()
+
+# commande toute faite pour représenter :
+# variable importance plot
+varImpPlot(rf, main = "Random Forest", cex = 0.8)
+```
+
+## Choix optimal des paramètres
+
+On va chercher à optimiser le nombre de variables à considérer à chaque cission.
+La profondeur des arbres (maxnodes, nodesize) et la taille de la forêt sont aussi des paramètres à traiter.
+
+### Création/définition du workflow avec la paramètre mtry à optimsier.
+
+#### ne fonctionne pas
+```{r}
+# recette
+rec <- recipe(vhappy ~ ., data = train_data) # déjà créé avant
+
+# spécification du modèle : randomforest
+random_forest_spec <- rand_forest(mtry = tune()) |> #on optimise mtry 
+  set_engine("randomForest", importance = TRUE) |> # par défaut l'engin est ranger 
   set_mode("classification")
-```
 
-```{r}
-n_core <- detectCores(logical = TRUE)
-registerDoParallel(cores = n_core - 1)
-
-# workflow avec paramètres à choisir
-tune_tree_wf <- workflow() |> 
-  add_model(tree_spec |> 
-              set_args(cost_complexity = tune()) # les arguments sont soit une valeurs soit etre optimisé
-            ) |>
+tune_rf_wf <- workflow() |> 
+  add_model(random_forest_spec) |> 
   add_recipe(rec)
-# création des échantillons de validation croisée
-data_cv <- vfold_cv(data_train) # on peut recommencer la VC pour solidifier le test
-# valeurs à tester
-cost_complexity_grid <- grid_regular(cost_complexity(range = c(-5,-0.1)), # Pas du vrai CART, on spécifie les valeurs à tester. Elles vont de 10^-5 à l'extremité proche du nombre entier
-                                     levels = 15)
-#on a créée une grille de 15 niveau de cout de complexité
-tree_tune_res <- tune_grid(
-  tune_tree_wf, # le workflow
+```
+Recherche du paramètre mtry optimal parmi les entiers via une validation croisée*
+```{r}
+data_cv <- vfold_cv(data_train, repeats=5) # validation croisée
+# et on fait 5 validations croisées 
+
+mtry_grid <- data.frame(mtry = 1)
+# on crée une grille de valeur 
+# on test les valeurs allant de 1 à 13
+
+rf_tune_res <- tune_grid(
+  tune_rf_wf, # le workflow
   resamples = data_cv, # les échantillons de validation croisée
-  grid = cost_complexity_grid, # la grille des valeurs à tester
+  grid = mtry_grid, # la grille des valeurs à tester
   metrics = metric_set(accuracy) # la métrique pour choisir la meilleur valeur
 )
-
-autoplot(tree_tune_res)
-
-stopImplicitCluster()
+ # environ 1 minute sur fixe perso
+autoplot(rf_tune_res)
 ```
 
 ```{r}
-tree_tune_res |> show_best(metric = "accuracy")
+rf_tune_res |> show_best(metric = "accuracy")
+```
+
+#### Optimisation de plusieurs paramètres, grille de paramètres
+
+Dans le modèle de forêt aléatoire on peut optimiser la *profondeur des arbres* et *le nombre d'arbre* pour optimiser la mémoire utilisé
+
+```{r}
+args(rand_forest)
+
+translate(random_forest_spec)
+
+extract_parameter_set_dials(random_forest_spec)
 ```
 
 ```{r}
-best_cost_complexity <- select_best(tree_tune_res, metric = "accuracy")
+mtry()
+```
+#### Optimisation de tous les paramètres 
 
-final_tune_tree_wf <- tune_tree_wf |> 
-  finalize_workflow(best_cost_complexity)
+```{r}
+
+random_forest_spec <- rand_forest(mtry = tune(), min_n = tune(), trees = tune()) |> 
+  set_engine("randomForest", importance = TRUE) |> 
+  set_mode("classification")
+
+tune_rf_wf <- workflow() |> 
+  add_model(random_forest_spec) |> 
+  add_recipe(rec)
+
+extract_parameter_set_dials(tune_rf_wf) 
 ```
 
 ```{r}
-tree_fit <- final_tune_tree_wf |> last_fit(split_data)
-tree_fit |> collect_metrics() 
+expand_grid(mtry = 1:3, trees = c(100, 50, 200, 500)) # construction d'un tibble
+expand.grid(mtry = 1:3, trees = c(100, 50, 200, 500)) # construction d'un datatab
+crossing(mtry = 1:3, trees = c(100, 50, 200, 500))#valeurs ordonné
+crossing(mtry = 1:3, trees = c(100, 50, 200, 500), min_n = c(2, 5, 10, 20, 50))
 ```
 
 ```{r}
-tree_fit |> collect_predictions() 
-```
-
-```{r}
-tree_fit |> collect_predictions() |> roc_curve(vhappy, .pred_no) |> autoplot()
-
-tree_preds <- tree_fit |> collect_predictions()
-
-# Vérifie que 'vhappy' est bien un facteur
-tree_preds <- tree_preds |> mutate(vhappy = as.factor(vhappy))
-
-# Courbe ROC et AUC
-roc_curve(tree_preds, truth = vhappy, .pred_no) |> 
-  autoplot()
-
-roc_auc(tree_preds, truth = vhappy, .pred_no)
-```
-Il y aurait une air sous la courbe de 64.3%
-
-```{r}
-tree_fit |> 
-  extract_fit_engine() |> 
-  rpart.plot::prp(type = 0, extra = 1, split.box.col = "lightblue",
-                  roundint = FALSE)
-```
-
-```{r}
-final_model <-  final_tune_tree_wf |> 
-  fit(data) # données complètes
+# préciser ou changer les étendues
+rf_param <- extract_parameter_set_dials(tune_rf_wf) |> #on extrait les paramètres
+  update(mtry = mtry(c(1,13)), trees = trees(c(50,500))) 
+grid_regular(rf_param, levels = 2) # on prend 2 levels pour les param
+grid_regular(rf_param, levels = c(mtry = 15, trees = 4, min_n = 4))
+# on précise le nombre de valeur qu'il prend, puis parmis la liste des valeurs proposé dans update il choisira de façon bien répartie 
 ```
 ```{r}
-save(final_model, file = "model_v1.RData")
-```
+n_core = parallel::detectCores(logical = TRUE)
+registerDoParallel(cores = n_core - 1) # on définit qu'on travaille sur plusieurs cores
 
-
-# Données à prédire 
-
-## Intégration des données 
-
-```{r}
-a_predire <- data.frame(
-    year = c(1994,1998,2004),
-    workstat = c("retired","keeping house","other"),
-    prestige = c(12,54,32),
-    DivWid = c("yes","no","yes"),
-    educ = c(7,16,11),
-    kids = c(0,3,5),
-    income = c("$10000 - 14999","$25000 or more","lt $1000"),
-    region = c("new england","w. sou. central","	
-pacific"),
-    attend = c(6,30,104),
-    owngun = c("iap","yes","NA"),
-    tvhours = c(1,4,9),
-    vhappy = c("yes","no","yes"),
-    mothfath16 = c(FALSE,TRUE,TRUE),
-    black = c(TRUE,FALSE,TRUE),
-    female = c(TRUE,TRUE,FALSE),
-    unem10 = c("no","yes","NA")
+# 13s avec 13 coeurs et mon ordi pro version 2024
+# 5 minutes avec 8 coeurs sur mon ordinateur fixe pro
+# 1 minutes avec 3 coeurs sur mon ordinateur fixe perso
+rf_tune_res <- tune_grid(
+  tune_rf_wf, 
+  resamples = data_cv, 
+  grid = grid_regular(rf_param, levels = c(mtry = 2, trees = 4, min_n = 4)), 
+  metrics = metric_set(accuracy)
 )
-```
 
-
-## Chargement du modèle 
-
-```{r}
-# chargement du modèle
-load("model_v1.RData")
-# cette commande créera un objet du même nom qu'au départ
-predict(final_model, new_data = a_predire) # par défaut type = "class"
+#
+stopImplicitCluster()# ferme le cluster
 ```
 
 ```{r}
-predict(final_model, new_data = a_predire, type = "prob")
+autoplot(rf_tune_res)  +
+  theme_minimal() +
+  theme(legend.position = "bottom")
 ```
 
+## Avec RANGER
+
+```{r}
+ranger_rf_spec <- rand_forest(mtry = tune(), min_n = tune(), trees = tune()) |> 
+  set_engine("ranger", verbose = TRUE) |> 
+  set_mode("classification")
+
+tune_ranger_wf <- workflow() |> 
+  add_model(ranger_rf_spec) |> 
+  add_recipe(rec)
+```
+
+```{r}
+registerDoParallel(cores = n_core - 1)
+# 
+ranger_tune_res <- tune_grid(
+  tune_ranger_wf, 
+  resamples = data_cv, 
+  grid = crossing(mtry = c(1, 2, 3), trees = c(100, 50), min_n = c(2, 5, 10)), 
+  metrics = metric_set(accuracy)
+)
+#
+stopImplicitCluster()# ferme le cluster
+```

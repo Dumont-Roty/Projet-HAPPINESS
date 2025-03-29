@@ -1,0 +1,294 @@
+---
+title: "Net_Don_Happiness"
+format: html
+embed-resources: true
+---
+
+# Packages
+
+```{r}
+#| label: importation des packages
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+library(dplyr)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(doParallel)
+library(ggplot2)
+theme_set(theme_minimal())
+library(readr)
+library(randomForest)
+library(hardhat)
+library(ada)
+library(caret)
+library(xgboost)
+```
+
+# Importation des données
+
+```{r}
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+```
+# Echantillonage
+
+```{r}
+set.seed(1)
+
+data_split <- data |> initial_split(prop = 3/4)
+
+test_data <- data_split |> testing()
+train_data <- data_split |> training()
+```
+
+
+## Boosting
+
+## Adaboost
+
+Un boosting d’arbres de classification avec l’algorithme AdaBoost peut être réaliser en utilisant le package ada. Les arguments type = "discrete" et loss = "exponential" permettent de réaliser la méthode vue en cours.
+
+```{r}
+n_core <- parallel::detectCores(logical = TRUE)
+doParallel::registerDoParallel(cores = n_core - 1)
+
+boost <- ada(vhappy ~ .,
+  data = train_data, type = "discrete", loss = "exponential",
+  control = rpart.control(cp = 0), # paramètre de coup de complexité fixé à 0
+  iter = 500, # nombre d'ittération de l'algo
+  nu = 1 # si pénalisation 1 = pas de pénalisation
+)
+boostpen1 <- ada(vhappy ~ .,
+  data = train_data, type = "discrete", loss = "exponential",
+  control = rpart.control(maxdepth =1, cp = -1, # coup de complexité
+                          minsplit = 0, xval = 0), 
+  iter = 500,
+  nu = 1 # Pénalisation à 1
+)
+boostpen01 <- ada(vhappy ~ .,
+  data = train_data, type = "discrete", loss = "exponential",
+  control = rpart.control(maxdepth =1, cp = -1, # coup de complexité
+                          minsplit = 0, xval = 0), 
+  iter = 500,
+  nu = 0.1 # Pénalisation à 0.1
+)
+boostpen001 <- ada(vhappy ~ .,
+  data = train_data, type = "discrete", loss = "exponential",
+  control = rpart.control(maxdepth =1, cp = -1, # coup de complexité
+                          minsplit = 0, xval = 0), 
+  iter = 500,
+  nu = 0.01 # Pénalisation à 0.01
+)
+
+doParallel::stopImplicitCluster()
+```
+
+L'erreur tend vers 0 donc on a du sur apprentissage
+
+```{r}
+data.frame(iter = 1:500) |> 
+  mutate(boost1 = boost$model$errs[1:500, c("train.err")],
+         pen1 = boostpen1$model$errs[1:500, c("train.err")],
+         pen01 = boostpen01$model$errs[1:500, c("train.err")],
+         pen001 = boostpen001$model$errs[1:500, c("train.err")]) |>
+  pivot_longer(cols = 2:5, names_to = "model", values_to = "error") |>
+  ggplot() + aes(x = iter, y = error, color = model) + geom_line() +
+  labs(title = "Differents boosting models", x = "Iterations", y = "Errors") +
+  lims(y = c(0,0.35))
+```
+Plus la pénalisation est forte moins il y a d'amélioration des erreurs (pas de sur-aprentissage non plus)
+
+## Optimisation avec Caret
+
+```{r}
+registerDoParallel(cores = n_core - 1)
+
+ctrlCv <- trainControl(method = "repeatedcv", 
+                       repeats = 2, number = 5)
+
+adaGrid <- expand_grid(maxdepth = c(1, 30), 
+                       iter = c(100, 200, 500, 1000), 
+                       nu = c(1, 0.01, 0.1))
+
+system.time(caretada <- train(vhappy ~ .,
+  data = train_data, method = "ada",
+  trControl = ctrlCv, tuneGrid = adaGrid
+)) 
+
+stopImplicitCluster()
+save(caretada, file = "result_caret_adaboost.RData")
+```
+
+```{r}
+caretada
+caretada$bestTune
+best_boost <- caretada$finalModel
+#  iter maxdepth  nu
+#  100        4  0.1
+plot(best_boost, test = TRUE)
+```
+
+## Boosting et tidymodels avec xgboost
+
+```{r}
+rec <- recipe(vhappy ~ ., data = train_data) # déjà créé avant
+# on crée une recette propre au boosting (en plus de la recette de bas déjà définie)
+rec_for_boost <- rec |> 
+  step_dummy(all_nominal_predictors()) # on transforme en dummy variable toutes les variables nominal 
+```
+
+```{r}
+boost_spec <- boost_tree(trees = tune()) |> #boost_tree où on tune le nombre d'arbre
+  set_engine("xgboost") |> # nouvel engin : attention avce ça il faut coder les quali 0 et 1 
+  set_mode("classification")
+# workflow : 
+tune_boost_wf <- workflow() |> 
+  add_model(boost_spec) |> 
+  add_recipe(rec_for_boost)
+#
+trees()
+```
+
+```{r}
+registerDoParallel(cores = n_core - 1)
+
+data_cv <- vfold_cv(train_data) #validation croisée
+boost_tune_res <- tune_grid(
+    tune_boost_wf, 
+    resamples = data_cv, 
+    grid = grid_regular(extract_parameter_set_dials(tune_boost_wf), levels = 5), 
+    metrics = metric_set(accuracy)
+)
+#
+stopImplicitCluster()
+```
+
+```{r}
+autoplot(boost_tune_res)  +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Avec un peu plus de paramètres à optimiser :
+
+```{r}
+boostB_spec <- boost_tree(trees = tune(), #nombre d'arbre
+                          tree_depth = tune(), #profondeur
+                          learn_rate = tune()) |> #pénalisation
+  set_engine("xgboost") |> 
+  set_mode("classification")
+tune_boostB_wf <- workflow() |> 
+  add_model(boostB_spec) |> 
+  add_recipe(rec_for_boost)
+#
+trees()
+tree_depth()
+learn_rate() #pour la pénalisation il faut renseigner des puissance de 10^-?
+# ex si on met 1 -> 0.1 = 10^-1
+```
+
+```{r}
+grille <- grid_regular(extract_parameter_set_dials(tune_boostB_wf), 
+                       levels = c(trees = 5, 
+                                  tree_depth = 5, 
+                                  learn_rate = 3))
+grille
+unique(grille$tree_depth)
+unique(grille$trees)
+unique(grille$learn_rate)
+#on observe la grille
+
+
+registerDoParallel(cores = n_core-1)
+
+system.time(
+  boostB_tune_res <- tune_grid(
+    tune_boostB_wf, 
+    resamples = data_cv, 
+    grid = crossing(trees = c(200, 500, 1000, 2000),
+                    tree_depth = c(1, 5, 10, 20),
+                    learn_rate = c(1, 0.1, 0.05, 0.01)), 
+    metrics = metric_set(accuracy)
+  )
+)
+#
+stopImplicitCluster()# ferme le cluster
+```
+
+```{r}
+autoplot(boostB_tune_res)  +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+2eme tour :
+
+```{r}
+registerDoParallel(cores = n_core-1)
+# ? minutes avec 8 coeurs
+system.time(
+  boostB_tune_res <- tune_grid(
+    tune_boostB_wf, 
+    resamples = data_cv, 
+    grid = crossing(trees = c(100, 200, 500, 1000, 2000),
+                    tree_depth = c(1, 3),
+                    learn_rate = c(0.08, 0.06, 0.04, 0.02, 0.005)), 
+    metrics = metric_set(accuracy)
+  )
+)
+#
+stopImplicitCluster()# ferme le cluster
+
+autoplot(boostB_tune_res)  +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+3eme tour :
+
+```{r}
+registerDoParallel(cores = n_core-1)
+# ? minutes avec 8 coeurs
+system.time(
+  boostB_tune_res <- tune_grid(
+    tune_boostB_wf, 
+    resamples = data_cv, 
+    grid = crossing(trees = c(500, 1000, 2000, 5000),
+                    tree_depth = c(1),
+                    learn_rate = seq(from = 0.005, to = 0.1, by = 0.005)), 
+    metrics = metric_set(accuracy)
+  )
+)
+#
+stopImplicitCluster()# ferme le cluster
+
+autoplot(boostB_tune_res)  +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+On voit que le meilleure ici est à 500 arbres, avec un learning rate de 0.04 environ.
+
+```{r}
+boostB_tune_res |> show_best(metric = "accuracy")
+#best_parameters_boost <- select_best(boostB_tune_res)
+best_parameters_boost <- tibble(trees = 500, tree_depth = 1, learn_rate = 0.02)#valeur rentrée à la main en fonction de ce qu'on a observé
+final_boost_wf <- tune_boostB_wf |> 
+  finalize_workflow(best_parameters_boost)
+```
+
+```{r}
+boost_fit <- final_boost_wf |> last_fit(split = data_split)
+boost_fit |> collect_metrics()
+boost_fit |> collect_predictions() |> accuracy(truth = vhappy, estimate = .pred_class)
+boost_fit |> collect_predictions() |> conf_mat(truth = vhappy, estimate = .pred_class)
+boost_fit |> collect_predictions() |> roc_curve(vhappy, .pred_no) |> autoplot()
+```
