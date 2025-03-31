@@ -1,0 +1,901 @@
+---
+title: "Presentation modeles de prediction"
+author: "Pierre Dumont Roty et Emmanuel Paguiel"
+format: 
+  revealjs:
+    highlight-style: dracula
+    footer: Classification
+    transition: convex
+---
+
+```{r}
+#| message: FALSE
+#| warning: FALSE
+
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+library(dplyr)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(doParallel)
+library(ggplot2)
+theme_set(theme_minimal())
+library(readr)
+library(randomForest)
+library(hardhat)
+library(ada)
+library(caret)
+library(xgboost)
+library(themis)
+library(wooldridge)
+library(kableExtra)
+library(FactoMineR)
+library(factoextra)
+library(DT)
+library(pROC)
+library(discrim)
+library(vip)
+
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
+
+
+```
+
+```{r}
+set.seed(1)
+data_split <- data |> initial_split(prop = 3/4)
+test_data <- data_split |> testing()
+train_data <- data_split |> training()
+
+n <- nrow(data) #taille de la data
+N <- round(1/2*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+data2 <- data %>% dplyr::slice(train)
+
+data_split2 <- data2 |> initial_split(prop = 3/4)
+test_data2 <- data_split2 |> testing()
+train_data2 <- data_split2 |> training()
+
+dat_rec <- train_data  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  #step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05)%>%
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
+```
+
+## Sommaire
+
+- Présentation des données
+- Analyse descriptive
+- Présentation des différents modèles construits
+- Choix du meilleur modèle
+- Conclusion
+
+
+# Présentation de la base de donnée
+
+Base de données **happiness** du package **woolridge**
+
+## Base de données initial
+```{r}
+vis_miss(happiness)
+```
+- 17 000 observation 
+- 33 variables
+
+## Base de donnée transformé
+```{r}
+vis_miss(data)
+```
+
+- 15 000 observations * 15 variables
+- Les NA non imputés deviennt des modalités 
+
+
+## Variable à prédire 
+
+```{r}
+ggplot(data, aes(x=vhappy)) +
+  geom_bar(fill = "lightblue", color = "black") +
+  labs(title = "Fréquence d'apparition", x = "very happy", y = "Effectif") +
+  theme_minimal()
+```
+
+## Type des variables 
+
+### 
+```{r}
+library(kableExtra)
+
+variable_info <- data.frame(
+  Variable = c("year", "workstat", "prestige", "income", "region", "attend", "owngun", 
+               "tvhours", "vhappy", "mothfath16", "black", "female", "unem10", "DivWid", "kids"),
+  Type = c("numeric", "factor", "numeric", "factor", "factor", "numeric", "factor", 
+           "numeric", "factor", "factor", "factor", "factor", "factor", "factor", "numeric"),
+  Description = c(
+    "Année de l'enquête",
+    "Statut professionnel (ex: employé, au chômage, etc.)",
+    "Score de prestige de l'emploi",
+    "Tranche de revenu",
+    "Région de résidence",
+    "Fréquence de participation à des services religieux",
+    "Possession d'une arme à feu (oui/non)",
+    "Heures de télévision regardées par jour",
+    "Individu se considère très heureux (oui/non)",
+    "Parents encore ensemble à 16 ans (oui/non)",
+    "Individu est noir (oui/non)",
+    "Individu est une femme (oui/non)",
+    "Chômage sur les 10 dernières années (oui/non)",
+    "Divorcé ou veuf (oui/non)",
+    "Nombre d'enfants"
+  )
+)
+
+datatable(variable_info)
+
+```
+## 
+
+```{r}
+test_pre <- t.test(prestige ~ vhappy, data = data)
+test_attend <- t.test(attend ~ vhappy, data = data)
+test_tvhours <- t.test(tvhours ~ vhappy, data = data)
+test_kids <- t.test(kids ~ vhappy, data = data)
+
+results <- data.frame(
+  Variable = c("prestige", "attend", "tvhours","kids"),
+  p_value = c(format(test_pre$p.value, scientific = TRUE),
+              format(test_attend$p.value, scientific = TRUE),
+              format(test_kids$p.value, scientific = TRUE),
+              format(test_tvhours$p.value, scientific = TRUE)))
+
+results |> 
+  kbl() |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+
+acp <- data %>% select_if(is.numeric)
+res.acp <- PCA(acp, graph = F)
+fviz_pca_var(res.acp, col.var = "blue")
+```
+
+## 
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Test du chi² pour chaque variable qualitative
+test_workstat <- chisq.test(table(data$workstat, data$vhappy))
+test_income <- chisq.test(table(data$income, data$vhappy))
+test_region <- chisq.test(table(data$region, data$vhappy))
+test_owngun <- chisq.test(table(data$owngun, data$vhappy))
+test_black <- chisq.test(table(data$black, data$vhappy))
+test_female <- chisq.test(table(data$female, data$vhappy))
+test_unem10 <- chisq.test(table(data$unem10, data$vhappy))
+test_DivWid <- chisq.test(table(data$DivWid, data$vhappy))
+
+# Création d'un tableau avec les p-values
+results <- data.frame(
+  Variable = c("Statut professionnel", "Revenu", "Région", "Possession d'arme", 
+               "Identifié comme noir", "Sexe (Femme)", "Chômage 10 ans", "Divorcé / Veuf"),
+  p_value = c(test_workstat$p.value, test_income$p.value, test_region$p.value, 
+              test_owngun$p.value, test_black$p.value, test_female$p.value, 
+              test_unem10$p.value, test_DivWid$p.value)
+)
+
+# Affichage du tableau avec kable
+kable(results, digits = 4, caption = "Test du chi² entre les variables qualitatives et vhappy") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+# Modèles construit
+
+## Prérequis
+### Découpage :
+ 
+- 3/4 sont pour les données d'entrainement
+- 1/4 sont pour les données test
+- 50% de l'échantillon si modèle trop lourd
+
+## Prérequis
+### Recettes
+```{r }
+#| echo: TRUE
+recette <- train_data  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  # step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
+```
+
+
+## Prérequis
+### Paramètres
+
+```{r }
+#| echo: TRUE
+dat_folds <- vfold_cv(train_data, v = 5, strata = vhappy)
+```
+
+## Prérequis
+### Metrics
+
+- La metric prise sera "ROC AUC"
+- Classe légérement déséquilibré
+- Facilement représentable dans les modèles
+
+# Modèle Linear Discriminant Analysis
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/LDA/model_LDA.RData")
+```
+
+## Spécification
+```{r}
+lda_mod <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+```
+```{r }
+#| echo: TRUE
+lda_mod <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+```
+
+```{r}
+lda_spec <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+lda_wf <- workflow() |> 
+  add_model(lda_mod) |> 
+  add_recipe(dat_rec)
+```
+```{r }
+#| echo: TRUE
+lda_spec <- discrim_linear() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+lda_wf <- workflow() |> 
+  add_model(lda_mod) |> 
+  add_recipe(dat_rec)
+```
+
+## Optimisation des hyper paramètres
+
+```{r }
+#| echo: TRUE
+collect <- function(x){
+  last_fit(x,split = data_split) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
+    collect_predictions()
+}
+
+lda_result <- lda_wf |> collect()
+```
+
+## Matrice de confusion 
+
+```{r}
+lda_fit <- lda_spec |> 
+  fit(vhappy ~ .,data = train_data)
+
+lda_predict <- lda_fit %>% predict(new_data = test_data)
+
+tab_lda <- augment(lda_fit,new_data = test_data) |> conf_mat(truth=vhappy,estimat=.pred_class)
+
+tab_lda[[1]]%>%
+ matrix(nrow=nrow(.))%>%
+ t()%>%
+ addmargins()%>%
+ as_tibble()%>%
+ add_column(Réalité=c("N vhappy","vhappy","Total"),.before=1)%>%rename("N vhappy"=V1,"vhappy"=V2,Total=Sum)%>%
+ kable()%>%
+ add_header_above(c("","Prédiction"=2,""))%>%
+ column_spec(c(4),bold=T,background="#F4F6F6",width="2cm") %>%
+ column_spec(1,bold=T)%>%
+ row_spec(c(3),bold=T,background="#F4F6F6") %>%
+ row_spec(c(0),bold=T)%>%
+ kable_styling(position="center",
+ full_width=FALSE,
+ bootstrap_options = "bordered",
+ latex_options = "hold_position")
+```
+Le taux de bonne prédiction est à `r round((2508+169)/3907*100,2)`%
+
+
+## Resultat
+
+```{r}
+lda_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+pROC::roc(test_data$vhappy, lda_result$.pred_no) %>% pROC::auc() #0.677
+```
+
+
+# Modèle QDA 
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/QDA/model_QDA.RData")
+```
+
+## Spécification
+
+```{r}
+qda_mod <- discrim_quad() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+
+qda_wf <- workflow() |> 
+  add_model(qda_mod) |> 
+  add_recipe(dat_rec)
+```
+```{r }
+#| echo: TRUE
+qda_mod <- discrim_quad() |> 
+  set_mode("classification") |> 
+  set_engine("MASS")
+
+qda_wf <- workflow() |> 
+  add_model(qda_mod) |> 
+  add_recipe(dat_rec)
+```
+## Matrice de confusion 
+
+```{r}
+qda_fit <- qda_mod |> 
+  fit(vhappy ~ ., data = train_data)
+
+qda_predict <- qda_fit |> predict(new_data = test_data)
+
+tab_qda <- augment(qda_fit,new_data = test_data) |> conf_mat(truth=vhappy,estimat=.pred_class)
+
+tab_qda[[1]]%>%
+ matrix(nrow=nrow(.))%>%
+ t()%>%
+ addmargins()%>%
+ as_tibble()%>%
+ add_column(Réalité=c("N vhappy","vhappy","Total"),.before=1)%>%rename("N vhappy"=V1,"vhappy"=V2,Total=Sum)%>%
+ kable()%>%
+ add_header_above(c("","Prédiction"=2,""))%>%
+ column_spec(c(4),bold=T,background="#F4F6F6",width="2cm") %>%
+ column_spec(1,bold=T)%>%
+ row_spec(c(3),bold=T,background="#F4F6F6") %>%
+ row_spec(c(0),bold=T)%>%
+ kable_styling(position="center",
+ full_width=FALSE,
+ bootstrap_options = "bordered",
+ latex_options = "hold_position")
+```
+
+## Resultat 
+
+```{r}
+qda_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+pROC::roc(test_data$vhappy, qda_result$.pred_no) %>% pROC::auc()
+```
+
+# Modèle knn 
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/knn/model_KNN.RData")
+```
+
+## Spécification
+```{r }
+#| echo: TRUE
+#| eval: FALSE
+nearest_neighbor() |> 
+  set_mode("classification") |> 
+  set_engine("kknn")
+
+knn_wf <- workflow() |> 
+  add_model(knn_mod |> set_args(neighbors = tune())) |> 
+  add_recipe(dat_rec)
+
+```
+
+
+## Test des hyper paramètres
+
+![ ](D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/knn/NN.png)
+
+## Resultat
+
+```{r}
+knn_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+pROC::roc(test_data$vhappy, knn_result$.pred_no) %>% pROC::auc()
+```
+
+
+# Modèle SVM linéaire
+Ne contient que 50% de l'echantillon d'observation par soucis de modélisation
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/svm lin/model_svm_lin.RData")
+```
+
+## Spécification
+```{r }
+#| echo: TRUE
+#| eval: false
+svm_lin_grid <- grid_regular(cost(), levels = 5)
+tune_res_svm_lin <- tune_grid(svm_linear_wf,
+                              resamples = dat_folds,
+                              grid = svm_lin_grid,
+                              metrics = metric_set(roc_auc))
+```
+
+## Resultat
+
+```{r}
+svm_lin_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+pROC::roc(test_data2$vhappy, svm_lin_result$.pred_no) %>% pROC::auc()
+```
+
+# Modèle SVM radiale
+Ne contient que 50% de l'echantillon d'observation par soucis de modélisation
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/svm rad/model_svm_rad.RData")
+```
+
+## Workflow 
+
+```{r }
+#| echo: TRUE
+#| eval: false
+svm_rad_wf <- workflow() |> 
+  add_model(svm_rad_mod |> set_args(margin = tune(),rbf_sigma = tune())) |> 
+  add_recipe(dat_rec)
+```
+
+## Spécification
+```{r }
+#| echo: TRUE
+#| eval: false
+svm_rad_grid <- svm_rad_wf |> extract_parameter_set_dials() |> grid_regular(levels = 5)
+tune_res_svm_rad <- tune_grid(svm_rad_wf,
+                              resamples = dat_folds,
+                              grid = svm_rad_grid)
+```
+
+## Optimisation des paramètres 
+
+![ ](D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/1ère partie/svm rad/SVM rad 2.png)
+
+## Resultat
+
+```{r}
+svm_rad_result |> roc_curve(vhappy, .pred_no) |> autoplot()
+svm_rad_result <- svm_rad_result[-nrow(svm_rad_result),]
+roc(test_data$vhappy, svm_rad_result$.pred_no) %>% auc()
+```
+
+# Modèle Arbre CART
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/2ème partie/arbre/modele_final_arbre.RData")
+```
+
+## Spécification
+
+```{r}
+#| echo: TRUE
+#| eval: false
+
+arbre_mod <- decision_tree() |> 
+  set_engine("rpart") |> 
+  set_mode("classification") |> 
+  set_args(
+    cost_complexity = tune(),
+    tree_depth = tune()
+  )
+
+arbre_grid <- grid_regular(
+  cost_complexity(range = c(-15, -0.1)),
+  tree_depth(range = c(1, 10)),
+  levels = 10
+)
+
+arbre_wf <- workflow() |> add_model(arbre_mod) |> 
+  add_recipe(rec)
+```
+
+## Tune du cout de compléxité
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/2ème partie/arbre/atr.RData")
+```
+
+
+```{r}
+autoplot(arbre_tune_res) +
+  theme_minimal()
+```
+
+## Paramètres finaux
+
+```{r}
+#| echo: TRUE
+#| eval: false
+
+param_final_arbre <- arbre_tune_res |> 
+  select_best(metric = "accuracy")
+
+arbre_wf <- arbre_wf |> 
+  finalize_workflow(param_final_arbre)
+
+arbre_fit <- arbre_wf |> 
+  last_fit(data_split)
+
+test_performance_arbre <- arbre_fit |> collect_metrics()
+test_predictions_arbre <- arbre_fit |> collect_predictions()
+```
+
+```{r}
+test_performance_arbre <- arbre_fit |> collect_metrics()
+test_predictions_arbre <- arbre_fit |> collect_predictions()
+```
+
+
+## Importance des variables 
+
+```{r}
+extract_fit_parsnip(arbre_fit)$fit |> 
+  vip(num_features = 20) +
+  theme_minimal()
+```
+
+## Matrice de confusion
+
+```{r}
+tab_arbre <- test_predictions_arbre |> 
+  conf_mat(estimate = .pred_class, truth = vhappy)
+
+tab_arbre$table |> as.array() |> addmargins()
+```
+
+## Arbre CART
+
+```{r}
+arbre_fit |> 
+  extract_fit_engine() |> 
+  rpart.plot::prp(type = 0, extra = 1, split.box.col = "red", #prp ?
+                  roundint = FALSE)
+```
+
+## Courbe ROC
+
+```{r}
+roc_curve_arbre <- roc(test_predictions_arbre$vhappy, test_predictions_arbre$.pred_yes)
+ggroc(roc_curve_arbre, col = "red") +
+  ggtitle("Courbe ROC") +
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "blue") +
+  theme_minimal()
+
+roc(test_predictions_arbre$vhappy, test_predictions_arbre$.pred_yes) |> auc()
+```
+
+## Estimation des métrique
+```{r}
+library(yardstick)
+
+# Ensemble de métriques
+eval_metrics <- metric_set(accuracy, ppv, sens, f_meas, kap)
+
+# Métriques de classe
+class_metrics <- test_predictions_arbre |> 
+  eval_metrics(truth = vhappy, estimate = .pred_class)
+
+# ROC-AUC (nécessite .pred_yes)
+roc_auc <- test_predictions_arbre |> 
+  roc_auc(truth = vhappy, .pred_yes)
+
+# Combiner les résultats
+final_metrics <- bind_rows(class_metrics, roc_auc)
+final_metrics
+```
+
+# Modèle Random Forest
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/2ème partie/rf/rf_model_final.RData")
+```
+
+## Spécification
+```{r}
+#| echo: TRUE
+#| eval: false
+# Définition du modèle Random Forest avec importance des variables
+rf_spec <- rand_forest() |> 
+  set_engine("ranger", importance = "impurity") |> # Activé pour analyser les variables
+  set_mode("classification") |> 
+  set_args(trees = tune(), min_n = tune()) # Optimisation du nombre d'arbres et min_n
+
+# Combinaison du modèle et de la recette
+rf_wf <- workflow() |> 
+  add_model(rf_spec) |> 
+  add_recipe(rf_recipe)
+
+# Définition de la grille aléatoire
+rf_grid <- grid_random(
+  trees(range = c(500, 1000)),
+  min_n(range = c(5, 20)),   
+  size = 20       
+)
+
+# Validation croisée pour tester le modèle
+data_cv <- vfold_cv(train_data, v = 5, strata = vhappy)
+```
+
+## Optimisation des hyperparamètres
+
+```{r}
+#| echo: TRUE
+#| eval: false
+
+rf_spec <- rand_forest() |> 
+  set_engine("ranger", importance = "impurity") |> # Activé pour analyser les variables
+  set_mode("classification") |> 
+  set_args(trees = tune(), min_n = tune()) # Optimisation du nombre d'arbres et min_n
+
+rf_wf <- workflow() |> 
+  add_model(rf_spec) |> 
+  add_recipe(rf_recipe)
+
+rf_tune_res <- tune_grid(
+  rf_wf,
+  resamples = data_cv,
+  grid = rf_grid,
+  metrics = metric_set(accuracy)
+)
+# Identification des meilleurs hyperparamètres
+best_params <- rf_tune_res |> 
+  select_best(metric = "accuracy")
+
+# Finalisation du workflow avec les meilleurs paramètres
+rf_final_wf <- rf_wf |> 
+  finalize_workflow(best_params)
+
+# Ajustement du modèle avec les meilleurs hyperparamètres
+rf_fit <- rf_final_wf |> 
+  last_fit(data_split)
+
+# Collecte des métriques et des prédictions
+rf_metrics <- rf_fit |> collect_metrics()
+print(rf_metrics)
+
+rf_predictions <- rf_fit |> collect_predictions()
+```
+
+##
+
+```{r}
+# Préparation des données avec normalisation et sur-échantillonnage
+rf_recipe <- recipe(vhappy ~ ., data = train_data) |> 
+  step_normalize(all_numeric_predictors()) |>  # Normalisation des variables numériques
+  step_dummy(all_nominal_predictors()) |>     # Encodage des variables catégoriques
+  step_zv(all_predictors()) |>                # Suppression des variables sans variance
+  step_corr(all_numeric_predictors(), threshold = 0.9) |>  # Suppression des variables très corrélées
+  step_upsample(vhappy)                       # Sur-échantillonnage de la classe minoritaire
+
+rf_spec <- rand_forest() |> 
+  set_engine("ranger", importance = "impurity") |> # Activé pour analyser les variables
+  set_mode("classification") |> 
+  set_args(trees = tune(), min_n = tune()) # Optimisation du nombre d'arbres et min_n
+```
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/2ème partie/rf/rtr.RData")
+
+# Identification des meilleurs hyperparamètres
+best_params <- rf_tune_res |> 
+  select_best(metric = "accuracy")
+
+rf_wf <- workflow() |> 
+  add_model(rf_spec) |> 
+  add_recipe(rf_recipe)
+
+# Finalisation du workflow avec les meilleurs paramètres
+rf_final_wf <- rf_wf |> 
+  finalize_workflow(best_params)
+
+# Ajustement du modèle avec les meilleurs hyperparamètres
+rf_fit <- rf_final_wf |> 
+  last_fit(data_split)
+
+# Collecte des métriques et des prédictions
+rf_metrics <- rf_fit |> collect_metrics()
+print(rf_metrics)
+
+rf_predictions <- rf_fit |> collect_predictions()
+```
+
+## Matrice de confusion
+
+```{r}
+confusion_matrix_rf <- rf_predictions |> 
+  conf_mat(truth = vhappy, estimate = .pred_class)
+
+autoplot(confusion_matrix_rf, type = "heatmap") +
+  labs(title = "Matrice de Confusion - Random Forest")
+```
+
+## Courbe ROC et AUC
+
+```{r}
+roc_curve_rf <- rf_predictions |> 
+  roc_curve(truth = vhappy, .pred_no)
+
+ggplot(roc_curve_rf) +
+  geom_line(aes(x = 1 - specificity, y = sensitivity)) +
+  labs(title = "Courbe ROC - Random Forest") +
+  theme_minimal()
+
+rf_auc <- rf_predictions |> 
+  roc_auc(truth = vhappy, .pred_no)
+print(rf_auc)
+```
+```{r}
+ggplot(roc_curve_rf) +
+  geom_line(aes(x = 1 - specificity, y = sensitivity), color = "blue", size = 1) + # Courbe ROC
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +      # Bissectrice
+  labs(
+    title = "Courbe ROC - Random Forest",
+    x = "1 - Spécificité (Taux de Faux Positifs)",
+    y = "Sensibilité (Taux de Vrais Positifs)"
+  ) +
+  theme_minimal()
+```
+
+## Visualisation des variables importantes
+
+```{r}
+engine_rf <- rf_fit |> extract_fit_engine()
+
+engine_rf |> 
+  vip(num_features = 10) +
+  theme_minimal() +
+  labs(title = "Importance des Variables - Random Forest")
+```
+
+# Modèle Boosting
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/2ème partie/Boosting/boost_model_final.RData")
+```
+
+## Spécification
+
+```{r}
+#| echo: TRUE
+#| eval: false
+boost_spec <- boost_tree(
+  trees = tune(),              # Nombre d'arbres
+  learn_rate = tune(),         # Taux d'apprentissage
+  tree_depth = tune()          # Profondeur des arbres
+) |> 
+  set_engine("xgboost") |> 
+  set_mode("classification")
+
+boost_wf <- workflow() |> 
+  add_model(boost_spec) |> 
+  add_recipe(boost_recipe)
+
+boost_grid <- grid_random(
+  trees(range = c(500, 1500)),       # Nombre d'arbres
+  learn_rate(range = c(0.01, 0.3)), # Taux d'apprentissage
+  tree_depth(range = c(3, 10)),     # Profondeur des arbres
+  size = 20                         # Taille de la grille
+)
+
+data_cv <- vfold_cv(train_data, v = 5, strata = vhappy)
+```
+
+## Optimisation 
+
+```{r}
+#| echo: TRUE
+#| eval: false
+boost_tune_res <- tune_grid(
+  boost_wf,
+  resamples = data_cv,
+  grid = boost_grid,
+  metrics = metric_set(accuracy) # Évaluation avec la précision
+)
+```
+
+## Obtention des paramètres 
+```{r}
+#| echo: TRUE
+#| eval: false
+# Meilleurs paramètres
+best_params <- boost_tune_res |> 
+  select_best(metric = "accuracy")
+
+# Finalisation du workflow avec les meilleurs paramètres
+boost_final_wf <- boost_wf |> 
+  finalize_workflow(best_params)
+boost_fit <- boost_final_wf |> 
+  last_fit(data_split)
+
+# Collecte des métriques
+boost_metrics <- boost_fit |> collect_metrics()
+print(boost_metrics)
+
+boost_predictions <- boost_fit |> collect_predictions()
+```
+
+## Matrice de confusion 
+
+```{r}
+load("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/2ème partie/Boosting/bp.RData")
+
+confusion_matrix_boost <- boost_predictions |> 
+  conf_mat(truth = vhappy, estimate = .pred_class)
+
+autoplot(confusion_matrix_boost, type = "heatmap") +
+  labs(title = "Boosting")
+```
+
+## Courbe ROC 
+
+```{r}
+roc_curve_plot <- boost_predictions |> 
+  roc_curve(truth = vhappy, .pred_no) |> 
+  autoplot() +
+  ggtitle("Courbe ROC - ") +
+  theme_minimal()
+
+# Calculer l'AUC
+auc_value <- pROC::roc(boost_predictions$vhappy, boost_predictions$.pred_yes) |> 
+  pROC::auc()
+
+# Afficher la courbe ROC
+print(roc_curve_plot)
+
+# Afficher l'AUC
+print(auc_value)
+```
+
+# Conclusions 
+ 
+## 
+```{r}
+# Calculer l'AUC pour chaque modèle
+auc_lda <- roc(lda_result$vhappy, lda_result$.pred_yes) |> auc()
+auc_qda <- roc(qda_result$vhappy, qda_result$.pred_yes) |> auc()
+auc_knn <- roc(knn_result$vhappy, knn_result$.pred_yes) |> auc()
+auc_svm_lin <- roc(svm_lin_result$vhappy, svm_lin_result$.pred_yes) |> auc()
+auc_svm_rad <- roc(svm_rad_result$vhappy, svm_rad_result$.pred_yes) |> auc()
+auc_rf <- roc(rf_predictions$vhappy, rf_predictions$.pred_yes) |> auc()
+auc_arbre <- roc(test_predictions_arbre$vhappy, test_predictions_arbre$.pred_yes) |> auc()
+auc_boosting <- roc(boost_predictions$vhappy, boost_predictions$.pred_yes) |> auc()
+
+# Créer un tableau avec les résultats
+auc_table <- data.frame(
+  Modèle = c("LDA", "QDA", "KNN", "SVM Linéaire", "SVM Radial", "Random Forest", "CART", "Boosting"),
+  AUC = c(auc_lda, auc_qda, auc_knn, auc_svm_lin, auc_svm_rad, auc_rf, auc_arbre, auc_boosting)
+) |> arrange(desc(AUC))  # Trier par ordre croissant
+
+# Afficher le tableau avec kable
+auc_table |> 
+  kable(digits = 3, caption = "Aires sous la courbe ROC des modèles (triées par ordre croissant)") |> 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+
+```
+

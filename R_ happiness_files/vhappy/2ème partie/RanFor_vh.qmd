@@ -34,6 +34,7 @@ data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification sup
                   na = c("", "NA"))
 data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
 data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
 ```
 # Echantillonage
 
@@ -65,7 +66,7 @@ bag <- randomForest(vhappy ~ .,
   na.action = na.omit
 )
 #L'argument mtry permet de définir le nombre de variable aléatoire qui sont candidates pour les découpages.
-#Ici on a définit nvar commme le nombre de variable totale moins la variable à prédire (soit ici 13)
+#Ici on a définit nvar commme le nombre de variable totale moins la variable à prédire (soit ici 15)
 ```
 
 ## Etude et optimisation manuelle
@@ -94,13 +95,15 @@ On a également le taux d'erreur pour les modalités de la variable à prédire.
 
 ```{r}
 rf$votes %>% head()
+rf$votes %>% tail()
+summary(rf$votes)
 ```
 votes : quelle est la proportion d'arbres qui prédit No ou Yes pour un individu (un individu par ligne).
 Ex : l'individu 3 est prédit majoritairement No par les arbres.
 
 ```{r}
 data.frame(nb_trees = 1:rf$ntree,
-           random_forest = rf$err.rate[,1],
+           random_forest = rf$err.rate[,1], # OOB
            bagging = bag$err.rate[,1]) %>% # on a construit un data frame qui contient le nombre d'arbre et les erreurs
   tidyr::pivot_longer(cols = c(random_forest, bagging),
                       names_to = "model", values_to = "OOB_error") %>% 
@@ -108,7 +111,7 @@ data.frame(nb_trees = 1:rf$ntree,
   ggplot() + 
   aes(x = nb_trees, y = OOB_error, col = model) +
   geom_line() +
-  ylim(c(0, 0.45)) +
+  ylim(c(0.2, 0.45)) +
   theme_minimal()
 ```
 
@@ -117,9 +120,11 @@ Dans notre cas, le random forest est plus intéressant car on a plus d'arbre que
 
 ```{r}
 data.frame(nb_trees = 1:rf$ntree,
-           random_forest = rf$err.rate[,2:3],
-           bagging = bag$err.rate[,2:3]) %>% 
-  tidyr::pivot_longer(cols = c(random_forest.no, random_forest.yes, bagging.no, bagging.yes),
+           random_forest.no = rf$err.rate[,2], # no
+           random_forest.yes = 1 - rf$err.rate[,3], #yes
+           bagging.no = bag$err.rate[,2],#no
+           bagging.yes = 1 - bag$err.rate[,3]) %>% # yes
+  tidyr::pivot_longer(cols = c(random_forest.no, bagging.no, random_forest.yes, bagging.yes),
                       names_to = "model", values_to = "error") %>% 
   ggplot() + 
   aes(x = nb_trees, y = error, col = model) +
@@ -133,13 +138,13 @@ Que sur le modèle random Forest :
 data.frame(nb_trees = 1:rf$ntree,
            All = rf$err.rate[,1],
            No = rf$err.rate[,2],
-           Yes = rf$err.rate[,3]) %>% 
+           Yes = 1-rf$err.rate[,3]) %>% 
   tidyr::pivot_longer(cols = c(All, No, Yes),
                       names_to = "Type", values_to = "OOB_error") %>% 
   ggplot() + 
   aes(x = nb_trees, y = OOB_error, col = Type) +
   geom_line() +
-  ylim(c(0, 0.45)) +
+  ylim(c(0, 1)) +
   theme_minimal()
 
 table(data_train$vhappy)
@@ -171,7 +176,7 @@ rf9 <- randomForest(vhappy ~ .,
   parms = list(split = "gini"))
 rf13 <- randomForest(vhappy ~ .,
   data = train_data, method = "class", 
-  mtry =13,
+  mtry =15,
   parms = list(split = "gini"))
 ```
 
@@ -204,7 +209,7 @@ prof <- c(2, 5, 10, 15, 20, 30, 40, 50, 100)
 i <- 1
 for (k in prof) {
   rfprobag <- randomForest(vhappy ~ .,
-    data = train_data, method = "class", ntree = 200,
+    data = train_data, method = "class", ntree = 500,
     parms = list(split = "gini"), maxnodes = k, mtry = nvar, na.action = na.omit
   )
   errprofbag[i] <- rfprobag$err.rate[200, 1]
@@ -305,7 +310,7 @@ Recherche du paramètre mtry optimal parmi les entiers via une validation crois�
 data_cv <- vfold_cv(data_train, repeats=5) # validation croisée
 # et on fait 5 validations croisées 
 
-mtry_grid <- data.frame(mtry = 1)
+mtry_grid <- data.frame(mtry = 15)
 # on crée une grille de valeur 
 # on test les valeurs allant de 1 à 13
 
@@ -354,16 +359,16 @@ extract_parameter_set_dials(tune_rf_wf)
 ```
 
 ```{r}
-expand_grid(mtry = 1:3, trees = c(100, 50, 200, 500)) # construction d'un tibble
-expand.grid(mtry = 1:3, trees = c(100, 50, 200, 500)) # construction d'un datatab
-crossing(mtry = 1:3, trees = c(100, 50, 200, 500))#valeurs ordonné
-crossing(mtry = 1:3, trees = c(100, 50, 200, 500), min_n = c(2, 5, 10, 20, 50))
+expand_grid(mtry = 1:15, trees = c(100, 50, 200, 500)) # construction d'un tibble
+expand.grid(mtry = 1:15, trees = c(100, 50, 200, 500)) # construction d'un datatab
+crossing(mtry = 1:15, trees = c(100, 50, 200, 500))#valeurs ordonné
+crossing(mtry = 1:15, trees = c(100, 50, 200, 500), min_n = c(2, 5, 10, 20, 50))
 ```
 
 ```{r}
 # préciser ou changer les étendues
 rf_param <- extract_parameter_set_dials(tune_rf_wf) |> #on extrait les paramètres
-  update(mtry = mtry(c(1,13)), trees = trees(c(50,500))) 
+  update(mtry = mtry(c(1,15)), trees = trees(c(50,500))) 
 grid_regular(rf_param, levels = 2) # on prend 2 levels pour les param
 grid_regular(rf_param, levels = c(mtry = 15, trees = 4, min_n = 4))
 # on précise le nombre de valeur qu'il prend, puis parmis la liste des valeurs proposé dans update il choisira de façon bien répartie 

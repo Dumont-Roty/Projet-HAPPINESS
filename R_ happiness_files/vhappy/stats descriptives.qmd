@@ -1,0 +1,46 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{r}
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+library(dplyr)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(doParallel)
+library(ggplot2)
+theme_set(theme_minimal())
+library(readr)
+library(randomForest)
+library(hardhat)
+library(ada)
+library(caret)
+library(xgboost)
+library(themis)
+library(wooldridge)
+library(kableExtra)
+library(FactoMineR)
+library(factoextra)
+
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
+```
+
+
+```{r}
+acp <- data %>% select_if(is.numeric)
+res.acp <- PCA(acp, graph = F)
+fviz_pca_var(res.acp, col.var = "blue")
+```
+

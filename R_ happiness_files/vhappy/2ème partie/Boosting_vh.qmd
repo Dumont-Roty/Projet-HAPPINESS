@@ -28,6 +28,7 @@ library(hardhat)
 library(ada)
 library(caret)
 library(xgboost)
+library(themis)
 ```
 
 # Importation des données
@@ -37,11 +38,12 @@ data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification sup
                   na = c("", "NA"))
 data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
 data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
 ```
 # Echantillonage
 
 ```{r}
-set.seed(1)
+set.seed(13)
 
 data_split <- data |> initial_split(prop = 3/4)
 
@@ -142,39 +144,54 @@ plot(best_boost, test = TRUE)
 rec <- recipe(vhappy ~ ., data = train_data) # déjà créé avant
 # on crée une recette propre au boosting (en plus de la recette de bas déjà définie)
 rec_for_boost <- rec |> 
-  step_dummy(all_nominal_predictors()) # on transforme en dummy variable toutes les variables nominal 
+  step_dummy(all_nominal_predictors()) |>
+  step_corr(all_numeric_predictors(), threshold = 0.8) |>
+  step_zv(all_predictors()) |>
+  step_smotenc(vhappy, over_ratio = tune(), neighbors = tune())
 ```
 
 ```{r}
-boost_spec <- boost_tree(trees = tune()) |> #boost_tree où on tune le nombre d'arbre
-  set_engine("xgboost") |> # nouvel engin : attention avce ça il faut coder les quali 0 et 1 
+boost_spec <- boost_tree(trees = tune(),
+                         tree_depth = tune()) |> 
+  set_engine("xgboost") |>
   set_mode("classification")
-# workflow : 
+
+
 tune_boost_wf <- workflow() |> 
   add_model(boost_spec) |> 
   add_recipe(rec_for_boost)
-#
-trees()
+
+
+grid_vals <- grid_regular(
+  trees(range = c(1, 500)),
+  tree_depth(range = c(2, 10)),
+  over_ratio(range = c(0.3, 1)),
+  neighbors(range = c(3, 10)),
+  levels = 3  # 3 niveaux par paramètre => 3^6 combinaisons max
+)
+
+
+data_cv <- vfold_cv(train_data, strata = vhappy) #validation croisée
 ```
 
 ```{r}
 registerDoParallel(cores = n_core - 1)
 
-data_cv <- vfold_cv(train_data) #validation croisée
 boost_tune_res <- tune_grid(
     tune_boost_wf, 
     resamples = data_cv, 
-    grid = grid_regular(extract_parameter_set_dials(tune_boost_wf), levels = 5), 
-    metrics = metric_set(accuracy)
+    grid = grid_vals, 
+    metrics = metric_set(accuracy, roc_auc)
 )
 #
 stopImplicitCluster()
 ```
 
 ```{r}
-autoplot(boost_tune_res)  +
-  theme_minimal() +
-  theme(legend.position = "bottom")
+autoplot(boost_tune_res)
+best_params <- select_best(boost_tune_res, metric = "roc_auc")
+best_params
+final_wf <- finalize_workflow(tune_boost_wf, best_params)
 ```
 
 Avec un peu plus de paramètres à optimiser :

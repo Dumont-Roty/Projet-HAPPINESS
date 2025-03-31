@@ -1,0 +1,269 @@
+---
+title: "arbre de décision"
+format: html
+---
+
+```{r}
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+library(dplyr)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(doParallel)
+library(ggplot2)
+theme_set(theme_minimal())
+library(readr)
+library(randomForest)
+library(hardhat)
+library(ada)
+library(caret)
+library(xgboost)
+library(themis)
+library(wooldridge)
+library(kableExtra)
+library(FactoMineR)
+library(factoextra)
+library(DT)
+library(pROC)
+library(vip)            # Importance des variables
+
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
+```
+
+```{r}
+# Désactiver toute connexion parallèle existante
+stopImplicitCluster()
+registerDoSEQ()  # Forcer le mode séquentiel
+```
+
+```{r}
+colnames(data)
+```
+
+```{r}
+summary(data$vhappy)
+```
+
+-   La proportion de personnes très heureuses est de `1079 / 2573 ≈ 0,419` (**41,9 %**).
+
+-   La proportion de personnes pas très heureuses est de `1494 / 2573 ≈ 0,581` (**58,1 %**).
+
+```{r}
+set.seed(1)
+data_split <- initial_split(data, prop = 0.75, strata = vhappy) 
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+```{r}
+rec <- recipe(vhappy ~ ., data = train_data) |> 
+  step_normalize(all_numeric_predictors()) |> 
+  step_dummy(all_nominal_predictors()) |> 
+  step_zv(all_predictors())
+```
+
+```{r}
+tree_spec <- decision_tree() |> 
+  set_engine("rpart") |> 
+  set_mode("classification") |> 
+  set_args(cost_complexity = tune())
+```
+
+```{r}
+data_cv <- vfold_cv(train_data, v = 5, strata = vhappy) 
+```
+
+```{r}
+cost_complexity_grid <- grid_regular(cost_complexity(range = c(-5, -0.1)), levels = 15)
+```
+
+```{r}
+tune_tree_wf <- workflow() |> 
+  add_model(tree_spec) |> 
+  add_recipe(rec)
+
+tree_tune_res <- tune_grid(
+  tune_tree_wf,
+  resamples = data_cv,
+  grid = cost_complexity_grid,
+  metrics = metric_set(accuracy)
+)
+```
+
+```{r}
+cost_complexity_grid <- grid_regular(cost_complexity(range = c(-5, -0.1)), levels = 15)
+```
+
+```{r}
+tree_spec <- decision_tree() |> 
+  set_engine("rpart") |> 
+  set_mode("classification") |> 
+  set_args(cost_complexity = tune(), min_n = tune())
+
+# Grille multidimensionnelle
+param_grid <- grid_regular(
+  cost_complexity(range = c(-5, -0.1)),
+  min_n(range = c(1, 10)),
+  levels = 5
+)
+```
+
+```{r}
+arbre_mod <- decision_tree() |> 
+  set_engine("rpart") |> 
+  set_mode("classification") |> 
+  set_args(
+    cost_complexity = tune(),
+    tree_depth = tune()
+  )
+```
+
+```{r}
+arbre_wf <- workflow() |> add_model(arbre_mod) |> 
+  add_recipe(rec)
+```
+
+```{r}
+n_cores <- parallel::detectCores(logical = TRUE)
+registerDoParallel(cores = n_cores - 2)
+
+arbre_grid <- grid_regular(
+  cost_complexity(range = c(-15, -0.1)),
+  tree_depth(range = c(1, 10)),
+  levels = 10
+)
+
+system.time(
+  arbre_tune_res <- tune_grid(
+    arbre_wf,
+    resamples = data_cv,  # Validation croisée
+    grid = arbre_grid,
+    metrics = metric_set(accuracy)
+  )
+)
+
+stopImplicitCluster()
+
+# Visualisation des résultats
+autoplot(arbre_tune_res) +
+  theme_minimal()
+```
+
+```{r}
+param_final_arbre <- arbre_tune_res |> 
+  select_best(metric = "accuracy")
+
+arbre_wf <- arbre_wf |> 
+  finalize_workflow(param_final_arbre)
+```
+
+```{r}
+arbre_fit <- arbre_wf |> 
+  last_fit(data_split)
+
+test_performance_arbre <- arbre_fit |> collect_metrics()
+test_predictions_arbre <- arbre_fit |> collect_predictions()
+
+# Sauvegarde du modèle final
+save(arbre_fit, file = "modele_final_arbre.RData")
+```
+
+```{r}
+arbre_fit |> 
+  extract_fit_engine() |> 
+  rpart.plot::prp(type = 0, extra = 1, split.box.col = "red",
+                  roundint = FALSE)
+```
+
+```{r}
+extract_fit_parsnip(arbre_fit)$fit |> 
+  vip(num_features = 20) +
+  ggtitle("Importance des variables") +
+  theme_minimal()
+```
+
+```{r}
+tab_arbre <- test_predictions_arbre |> 
+  conf_mat(estimate = .pred_class, truth = vhappy)
+
+tab_arbre$table |> as.array() |> addmargins()
+```
+
+```{r}
+roc_curve_arbre <- roc(test_predictions_arbre$vhappy, test_predictions_arbre$.pred_yes)
+ggroc(roc_curve_arbre, col = "red") +
+  ggtitle("Courbe ROC") +
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "blue") +
+  theme_minimal()
+
+roc(test_predictions_arbre$vhappy, test_predictions_arbre$.pred_yes) |> auc()
+```
+
+```{r}
+library(dplyr)
+
+train_data |> 
+  count(vhappy) |> 
+  mutate(proportion = n / sum(n))
+```
+
+Ces proportions montrent que la variable n’est pas parfaitement équilibrée, mais l’écart entre les deux classes ("no" : 58.06%, "yes" : 41.94%) n’est pas drastique. Cependant, cet écart peut quand même influencer les performances du modèle, en particulier si la classe majoritaire ("no") domine les prédictions.
+
+```{r}
+rpart.plot::rpart.plot(extract_fit_engine(arbre_fit), type = 0, extra = 1)
+```
+
+```{r}
+library(yardstick)
+
+# Ensemble de métriques
+eval_metrics <- metric_set(accuracy, ppv, sens, f_meas, kap)
+
+# Métriques de classe
+class_metrics <- test_predictions_arbre |> 
+  eval_metrics(truth = vhappy, estimate = .pred_class)
+
+# ROC-AUC (nécessite .pred_yes)
+roc_auc <- test_predictions_arbre |> 
+  roc_auc(truth = vhappy, .pred_yes)
+
+# Combiner les résultats
+final_metrics <- bind_rows(class_metrics, roc_auc)
+final_metrics
+```
+
+1.  **Mauvais déséquilibre des classes** (58% "no" vs 42% "yes") non corrigé
+
+2.  **Arbre probablement trop simple** (depth/tuning insuffisant)
+
+3.  **Variables peu informatives** (AUC\<0.5 suggère des prédictions incohérentes)
+
+```{r}
+# Rééquilibrage des Classes
+library(themis)
+rec <- recipe(vhappy ~ ., data = train_data) %>%
+  step_smote(vhappy, over_ratio = 0.8) %>%  # SMOTE pour sur-échantillonner
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors())
+```
+
+```{r}
+# Optimisation Approfondie
+tree_grid <- grid_regular(
+  cost_complexity(range = c(-10, -1)),
+  tree_depth(range = c(5, 20)), 
+  min_n(range = c(2, 10)),
+  levels = 10
+)
+```

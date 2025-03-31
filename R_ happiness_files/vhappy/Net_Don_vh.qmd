@@ -118,8 +118,8 @@ ID_v2 <- ID_v1[,-c(4:5,7:9)]
 n <- nrow(ID_v2) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_att <- ID_v2 %>% slice(train)
-dataTest_att <- ID_v2 %>% slice(-train)
+dataTrain_att <- ID_v2 %>% dplyr::slice(train)
+dataTest_att <- ID_v2 %>% dplyr::slice(-train)
 
 rec_att <- recipe(~., data = ID_v2) %>% 
   step_impute_knn(attend, neighbors = 5)
@@ -133,8 +133,8 @@ ID_v3 <- bake(rec_att_prep, new_data = ID_v2)
 n <- nrow(ID_v3) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_i <- ID_v3 %>% slice(train)
-dataTest_i <- ID_v3 %>% slice(-train)
+dataTrain_i <- ID_v3 %>% dplyr::slice(train)
+dataTest_i <- ID_v3 %>% dplyr::slice(-train)
 
 # induce some missing data at random
 set.seed(1)
@@ -172,12 +172,11 @@ ID_v5 <- ID_v4 %>% filter(!is.na(prestige))
 
 ### imputation de données manquantes de la variable *tvhours*
 
-
 n <- nrow(ID_v5) #taille de la data
 N <- round(2/3*n) # Taille de l'échantillon d'entrainement
 train <- sample(1:n, size = N) # découpage de la data train
-dataTrain_tv <- ID_v5 %>% slice(train)
-dataTest_tv <- ID_v5 %>% slice(-train)
+dataTrain_tv <- ID_v5 %>% dplyr::slice(train)
+dataTest_tv <- ID_v5 %>% dplyr::slice(-train)
 
 rec_tv <- recipe(~., data = ID_v5) %>% 
   step_impute_knn(tvhours, neighbors = 5)
@@ -188,10 +187,10 @@ ID_v6 <- bake(rec_tv_prep, new_data = ID_v5)
 # Suppression des modalités vide
 # J'ai supprimé les individus à qui il restait une MDA
 ID_v6 <- na.omit(ID_v6)
+
+ID_v7 <- ID_v6[,-c(4)]
 ```
 
 ```{r}
-write.csv(ID_v6, "vhappy.csv", row.names = FALSE)  # Enregistre sans les numéros de ligne
+write.csv(ID_v7, "vhappy.csv", row.names = FALSE)  # Enregistre sans les numéros de ligne
 ```
-
-

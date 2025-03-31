@@ -17,32 +17,35 @@ library(recipes)
 library(MASS) #Modélisation LDA/QDA
 library(pROC)
 library(kknn)
+library(future)
 ```
 
 # Importation des données
 
 ```{r}
-ID_v6 <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
                   na = c("", "NA"))
-ID_v6 <- ID_v6 %>% mutate(across(everything(), ~replace_na(.x, "NA")))
-ID_v6 <- ID_v6 %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
 ```
 
-# 10% de la data
+# 100% de la data
 ```{r}
-#n <- nrow(ID_v6) #taille de la data
-#N <- round(1/5*n) # Taille de l'échantillon d'entrainement
+#set.seed(1)
+#n <- nrow(data) #taille de la data
+#N <- round(1/2*n) # Taille de l'échantillon d'entrainement
 #train <- sample(1:n, size = N) # découpage de la data train
-#ID_v7 <- ID_v6 %>% slice(train)
+#data2 <- data %>% dplyr::slice(train)
 ```
 
 # Echantillonage 
 
 ```{r}
 set.seed(1)
-split_dat <- initial_split(ID_v7, prop = 0.75, strata = vhappy) # classique 3 quart / 1 quart
-dat_train <- training(split_dat)
-data_test <- testing(split_dat)
+data_split <- data |> initial_split(prop = 3/4)
+test_data <- data_split |> testing()
+train_data <- data_split |> training()
 ```
 
 ## Construction des différents modèles
@@ -60,11 +63,11 @@ svm_rad_mod <- svm_rbf() |>
 ### recette à appliquer 
 
 ```{r}
-# dat_rec <- dat_train |> recipe(vhappy~educ+kids+tvhours) #TROP LOOOOOOOOOOOONG
+# dat_rec <- train_data |> recipe(vhappy~educ+kids+tvhours) #TROP LOOOOOOOOOOOONG
 
-dat_rec <- dat_train  %>% recipe(vhappy~.) %>% 
+dat_rec <- train_data  %>% recipe(vhappy~.) %>% 
   step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
+  #step_dummy(all_nominal_predictors()) %>% 
   step_other(all_nominal_predictors(), threshold = 0.05) %>% 
   step_zv(all_predictors()) %>% 
   step_corr(all_numeric_predictors(), threshold = 0.9)
@@ -80,7 +83,7 @@ svm_rad_wf <- workflow() |>
 
 Pour l'optimisation des hyper paramètres --> ADOCK
 ```{r}
-dat_folds <- vfold_cv(dat_train, v = 5, strata = vhappy) # 5 couches qui respectent tjrs le nombre gens très heureux
+dat_folds <- vfold_cv(train_data, v = 5, strata = vhappy) # 5 couches qui respectent tjrs le nombre gens très heureux
 ```
 
 ### Grille pour tester les hyper paramètres
@@ -90,7 +93,7 @@ svm radial
 ```{r}
 # nombre de coeurs 
 n_core <- parallel::detectCores(logical = TRUE)
-registerDoParallel(cores = n_core -1) 
+plan(multisession, workers = parallel::detectCores() - 1)
 # on laisse un coeur pour le reste
 # réalisation des commandes nécéssitant la parallélisation
 
@@ -100,7 +103,7 @@ tune_res_svm_rad <- tune_grid(svm_rad_wf,
                               resamples = dat_folds,
                               grid = svm_rad_grid)
 
-stopImplicitCluster()# ferme le cluster
+plan(sequential)
 ```
 
 ```{r}
@@ -115,13 +118,14 @@ Les paramètres sont optimisés on peut maintenant faire travailler les modèles
 
 ```{r}
 collect <- function(x){
-  last_fit(x,split = split_dat) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
+  last_fit(x,split = split_data) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
     collect_predictions()
 }
 ```
 
 ```{r}
 svm_rad_result <- svm_rad_final_wf |> collect()
+svm_rad_result <- svm_rad_result[-nrow(svm_rad_result),]
 ```
 
 On va construitre un tableau qui continent les résultats pour chaque individus de la base de donnée testing, en fonctioon de la méthode utilisé
@@ -133,7 +137,7 @@ Comparons les modèles :
 
 ```{r}
 svm_rad_result |> roc_curve(vhappy, .pred_no) |> autoplot()
-roc(data_test$vhappy, svm_rad_result$.pred_no) %>% auc()
+roc(test_data$vhappy, svm_rad_result$.pred_no) %>% auc()
 ```
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
 

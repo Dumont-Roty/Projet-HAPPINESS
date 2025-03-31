@@ -1,0 +1,144 @@
+---
+title: "Gradient Boosting"
+format: html
+editor: visual
+---
+
+```{r}
+# Bibliothèques nécessaires
+library(tidymodels)
+library(xgboost)       # Gradient Boosting
+library(vip)           # Importance des variables
+library(pROC)          # Analyse de la courbe ROC
+library(doParallel)    # Parallélisation pour accélérer
+
+```
+
+```{r}
+
+data <- read_csv("E:/Happy/data/vhappy.csv") %>%
+  mutate(across(where(is.character), as.factor)) %>%
+  drop_na()  # Suppression des NA résiduels
+```
+
+```{r}
+# Division des données
+set.seed(73)
+split_data <- initial_split(data, prop = 0.75, strata = vhappy)
+data_train <- training(split_data)
+data_test <- testing(split_data)
+
+
+# Vérification des données
+str(data_train)
+
+```
+
+```{r}
+boost_recipe <- recipe(vhappy ~ ., data = data_train) |> 
+  step_normalize(all_numeric_predictors()) |>  # Normalisation des variables numériques
+  step_dummy(all_nominal_predictors()) |>     # Encodage des facteurs en indicateurs
+  step_mutate(across(where(is.logical), as.numeric)) |> # Transformation des colonnes logiques en numériques
+  step_zv(all_predictors()) |>                # Suppression des variables sans variance
+  step_corr(all_numeric_predictors(), threshold = 0.9) # Suppression des variables très corrélées
+```
+
+```{r}
+boost_spec <- boost_tree(
+  trees = tune(),              # Nombre d'arbres
+  learn_rate = tune(),         # Taux d'apprentissage
+  tree_depth = tune()          # Profondeur des arbres
+) |> 
+  set_engine("xgboost") |> 
+  set_mode("classification")
+
+```
+
+```{r}
+boost_wf <- workflow() |> 
+  add_model(boost_spec) |> 
+  add_recipe(boost_recipe)
+
+```
+
+```{r}
+boost_grid <- grid_random(
+  trees(range = c(500, 1500)),       # Nombre d'arbres
+  learn_rate(range = c(0.01, 0.3)), # Taux d'apprentissage
+  tree_depth(range = c(3, 10)),     # Profondeur des arbres
+  size = 20                         # Taille de la grille
+)
+```
+
+```{r}
+# Validation croisée
+data_cv <- vfold_cv(data_train, v = 5, strata = vhappy)
+
+# Activation de la parallélisation
+n_cores <- parallel::detectCores(logical = TRUE)
+registerDoParallel(cores = n_cores - 2) # Réserver 2 cœurs pour d'autres tâches
+
+```
+
+```{r}
+boost_tune_res <- tune_grid(
+  boost_wf,
+  resamples = data_cv,
+  grid = boost_grid,
+  metrics = metric_set(accuracy) # Évaluation avec la précision
+)
+
+# Arrêter la parallélisation après l'entraînement
+stopImplicitCluster()
+
+```
+
+```{r}
+# Meilleurs paramètres
+best_params <- boost_tune_res |> 
+  select_best(metric = "accuracy")
+
+# Finalisation du workflow avec les meilleurs paramètres
+boost_final_wf <- boost_wf |> 
+  finalize_workflow(best_params)
+
+
+```
+
+```{r}
+boost_fit <- boost_final_wf |> 
+  last_fit(split_data)
+
+# Collecte des métriques
+boost_metrics <- boost_fit |> collect_metrics()
+print(boost_metrics)
+
+boost_predictions <- boost_fit |> collect_predictions()
+
+```
+
+```{r}
+confusion_matrix_boost <- boost_predictions |> 
+  conf_mat(truth = vhappy, estimate = .pred_class)
+
+autoplot(confusion_matrix_boost, type = "heatmap") +
+  labs(title = "Matrice de Confusion - Boosting")
+
+```
+
+```{}
+```
+
+##  {.smaller}
+
+```{r roc_boost}
+summary(boost_predictions$.pred_yes)
+
+```
+
+la médiane est **très basse (0.15)**, alors que la moyenne est autour de **0.40**.
+
+```{r}
+# Sauvegarde du modèle final
+save(boost_fit, file = "boost_model_final.RData")  
+```

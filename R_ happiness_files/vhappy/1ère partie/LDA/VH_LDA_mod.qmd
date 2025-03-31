@@ -22,12 +22,11 @@ library(kknn)
 # Importation des données
 
 ```{r}
-ID_v6 <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
                   na = c("", "NA"))
-ID_v6 <- ID_v6 %>% mutate(across(everything(), ~replace_na(.x, "NA")))
-ID_v6 <- ID_v6 %>% mutate(across(where(is.character), as.factor))
-#ID_v6$owngun <- NULL
-ID_v6 <- na.omit(ID_v6)
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
 ```
 
 
@@ -35,9 +34,10 @@ ID_v6 <- na.omit(ID_v6)
 
 ```{r}
 set.seed(1)
-split_dat <- initial_split(ID_v6, prop = 0.75, strata = vhappy)
-dat_train <- training(split_dat) # 3/4
-data_test <- testing(split_dat) # 1/4
+
+data_split <- data |> initial_split(prop = 3/4)
+test_data <- data_split |> testing()
+train_data <- data_split |> training()
 ```
 
 ## Construction des différents modèles
@@ -55,12 +55,12 @@ lda_mod <- discrim_linear() |>
 ### recette à appliquer 
 
 ```{r}
-# dat_rec <- dat_train |> recipe(vhappy~educ+kids+tvhours) #TROP LOOOOOOOOOOOONG
+# dat_rec <- train_data |> recipe(vhappy~educ+kids+tvhours) #TROP LOOOOOOOOOOOONG
 
-dat_rec <- dat_train  %>% recipe(vhappy~.) %>% 
+dat_rec <- train_data  %>% recipe(vhappy~.) %>% 
   step_normalize(all_numeric_predictors()) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
-  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
+  #step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05)%>%
   step_zv(all_predictors()) %>% 
   step_corr(all_numeric_predictors(), threshold = 0.9)
 ```
@@ -78,7 +78,7 @@ Les paramètres sont optimisés on peut maintenant faire travailler les modèles
 
 ```{r}
 collect <- function(x){
-  last_fit(x,split = split_dat) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
+  last_fit(x,split = data_split) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
     collect_predictions()
 }
 
@@ -92,7 +92,7 @@ Comparons les modèles :
 
 ```{r}
 lda_result |> roc_curve(vhappy, .pred_no) |> autoplot()
-roc(data_test$vhappy, lda_result$.pred_no) %>% auc() #0.677
+roc(test_data$vhappy, lda_result$.pred_no) %>% auc() #0.677
 ```
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
 

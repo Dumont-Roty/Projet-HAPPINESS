@@ -1,0 +1,182 @@
+---
+title: "Random Forest"
+format: html
+---
+
+```{r}
+# Chargement des packages nécessaires
+library(tidymodels)    # Framework pour les modèles
+library(ranger)        # Moteur Random Forest
+library(vip)           # Importance des variables
+library(ggplot2)       # Visualisation
+library(themis)        # Sur-échantillonnage
+library(doParallel)    # Parallélisation
+```
+
+```{r}
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
+```
+
+```{r}
+# Division des données en ensembles d'entraînement et de test
+set.seed(1)
+data_split <- initial_split(data, prop = 0.75, strata = vhappy)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+```{r}
+# Préparation des données avec normalisation et sur-échantillonnage
+rf_recipe <- recipe(vhappy ~ ., data = train_data) |> 
+  step_normalize(all_numeric_predictors()) |>  # Normalisation des variables numériques
+  step_dummy(all_nominal_predictors()) |>     # Encodage des variables catégoriques
+  step_zv(all_predictors()) |>                # Suppression des variables sans variance
+  step_corr(all_numeric_predictors(), threshold = 0.9) |>  # Suppression des variables très corrélées
+  step_upsample(vhappy)                       # Sur-échantillonnage de la classe minoritaire
+```
+
+```{r}
+# Définition du modèle Random Forest avec importance des variables
+rf_spec <- rand_forest() |> 
+  set_engine("ranger", importance = "impurity") |> # Activé pour analyser les variables
+  set_mode("classification") |> 
+  set_args(trees = tune(), min_n = tune()) # Optimisation du nombre d'arbres et min_n
+```
+
+```{r}
+# Combinaison du modèle et de la recette
+rf_wf <- workflow() |> 
+  add_model(rf_spec) |> 
+  add_recipe(rf_recipe)
+```
+
+```{r}
+# Définition de la grille aléatoire
+rf_grid <- grid_random(
+  trees(range = c(500, 1000)),         # Nombre d'arbres
+  min_n(range = c(5, 20)),             # Nombre minimal d'observations par nœud
+  size = 20                            # Nombre de combinaisons dans la grille
+)
+```
+
+```{r}
+# Validation croisée pour tester le modèle
+data_cv <- vfold_cv(train_data, v = 5, strata = vhappy)
+
+# Activation de la parallélisation pour accélérer
+n_core <- parallel::detectCores(logical = TRUE)
+plan(multisession, workers = parallel::detectCores() - 1)
+```
+
+```{r}
+# Optimiser le modèle avec la grille
+rf_tune_res <- tune_grid(
+  rf_wf,
+  resamples = data_cv,
+  grid = rf_grid,
+  metrics = metric_set(accuracy) # Évaluation avec la précision
+)
+
+plan(sequential)
+```
+
+```{r}
+# Identification des meilleurs hyperparamètres
+best_params <- rf_tune_res |> 
+  select_best(metric = "accuracy")
+
+# Finalisation du workflow avec les meilleurs paramètres
+rf_final_wf <- rf_wf |> 
+  finalize_workflow(best_params)
+```
+
+```{r}
+# Ajustement du modèle avec les meilleurs hyperparamètres
+rf_fit <- rf_final_wf |> 
+  last_fit(data_split)
+
+# Collecte des métriques et des prédictions
+rf_metrics <- rf_fit |> collect_metrics()
+print(rf_metrics)
+
+rf_predictions <- rf_fit |> collect_predictions()
+
+# Matrice de confusion
+confusion_matrix_rf <- rf_predictions |> 
+  conf_mat(truth = vhappy, estimate = .pred_class)
+
+autoplot(confusion_matrix_rf, type = "heatmap") +
+  labs(title = "Matrice de Confusion - Random Forest")
+
+# Courbe ROC et AUC
+roc_curve_rf <- rf_predictions |> 
+  roc_curve(truth = vhappy, .pred_yes)
+
+ggplot(roc_curve_rf) +
+  geom_line(aes(x = 1 - specificity, y = sensitivity)) +
+  labs(title = "Courbe ROC - Random Forest") +
+  theme_minimal()
+
+rf_auc <- rf_predictions |> 
+  roc_auc(truth = vhappy, .pred_yes)
+print(rf_auc)
+```
+
+```{r}
+ggplot(roc_curve_rf) +
+  geom_line(aes(x = 1 - specificity, y = sensitivity), color = "blue", size = 1) + # Courbe ROC
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +      # Bissectrice
+  labs(
+    title = "Courbe ROC - Random Forest",
+    x = "1 - Spécificité (Taux de Faux Positifs)",
+    y = "Sensibilité (Taux de Vrais Positifs)"
+  ) +
+  theme_minimal()
+```
+
+c'est très bizard cette courbe. Le modèle performe en dessous de la bissectrice.
+
+```{r}
+# Visualisation des variables importantes
+engine_rf <- rf_fit |> extract_fit_engine()
+
+engine_rf |> 
+  vip(num_features = 10) +
+  theme_minimal() +
+  labs(title = "Importance des Variables - Random Forest")
+```
+
+Vérification des données
+
+```{r}
+train_data |> 
+   count(vhappy) |> 
+   mutate(proportion = n / sum(n))
+```
+
+"no" : 58.06%., yes": 41.94% Cela indique un léger déséquilibre dans les classes. Est ce que Cela pourrait expliquer pourquoi la performance sur la courbe ROC est mauvaise.
+
+Solution : Sur-échantillonnage
+
+```{r}
+rf_spec <- rand_forest() |> 
+  set_engine("ranger", class.weights = c(yes = 0.58, no = 0.42)) |> 
+  set_mode("classification")
+```
+
+Analyse des corrélations
+
+```{r}
+cor(train_data |> select_if(is.numeric))
+```
+
+La variable est modérément corrélée à (0.515). Cela peut introduire de la redondance dans le modèle.
+
+```{r}
+# Sauvegarde du modèle final
+save(rf_fit, file = "rf_model_final.RData")  # Sauvegarde du modèle final pour une lecture facile
+```
