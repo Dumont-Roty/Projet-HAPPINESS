@@ -1,0 +1,800 @@
+---
+title: ""
+author: "Pierre DUMONT ROTY & Emmanuel PAGUIEL"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+    latex_engine: xelatex
+fontsize: 11pt
+geometry: a4paper, margin=1in
+linestretch: 1
+abstract: |
+  OOOOOOOOOOOO.
+---
+
+<!-- Package -->
+
+```{r setup_initial, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, comment = FALSE, fig.align = 'center')
+
+# Charger les librairies
+#| message: FALSE
+#| warning: FALSE
+
+set.seed(1)
+library(tidyverse)
+library(tidymodels)
+library(kableExtra)
+library(MASS) #Modélisation LDA/QDA
+library(naniar)
+library(recipes)
+library(dplyr)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(doParallel)
+library(ggplot2)
+theme_set(theme_minimal())
+library(readr)
+library(randomForest)
+library(hardhat)
+library(ada)
+library(caret)
+library(xgboost)
+library(themis)
+library(wooldridge)
+library(kableExtra)
+library(FactoMineR)
+library(factoextra)
+library(DT)
+library(pROC)
+library(discrim)
+library(vip)
+```
+
+```{r}
+# option taille des graph
+knitr::opts_chunk$set(fig.width = 5, fig.height = 3)
+```
+
+<!-- Couleurs -->
+```{r}
+# couleurs :
+col_ind <- "#008EA0FF" 
+col_var <- "lightgreen"
+col_bar <- "#00bb00" 
+
+logodark <- "#5A9599EE"
+corail <- "#FF6348FF"
+orange <- "#FF6F00FF"
+accent <- "#00817c"
+rouge <- "#e64173"
+violet <- "#8A4198FF"
+pal_js <- c("deeppink1", col_ind, col_var, orange, violet,  "seagreen2", "red", "blue", "pink", "black")
+
+
+colors <- c("black","lightblue" , col_var, orange, violet, 
+            "seagreen2", rouge, "deeppink1", "#8A419888", col_ind)
+
+cluster_colors <- c(
+  "#CCCCCC", 
+  "seagreen2", 
+  "#008EA0FF",
+  "#FFFF66",
+  "#66CCCC", 
+  "#B266FF",
+  "#FF66B2", 
+  "#FF6666", 
+  "#FFB366",
+  "#66B2FF"
+)
+```
+
+<!-- Importation des bases de données -->
+```{r}
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
+
+set.seed(1)
+data_split <- data |> initial_split(prop = 3/4)
+test_data <- data_split |> testing()
+train_data <- data_split |> training()
+
+n <- nrow(data) #taille de la data
+N <- round(1/2*n) # Taille de l'échantillon d'entrainement
+train <- sample(1:n, size = N) # découpage de la data train
+data2 <- data %>% dplyr::slice(train)
+
+data_split2 <- data2 |> initial_split(prop = 3/4)
+test_data2 <- data_split2 |> testing()
+train_data2 <- data_split2 |> training()
+
+dat_rec <- train_data  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  #step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05)%>%
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
+```
+
+
+\newpage
+
+# Création de modèle de prédiction du bonheur des individus 
+
+Introduire la base de données et l'intérêt de regarder les individus. Pourquoi on cherche à prédire le bonheur ? Comment ? Dans quel but ? reutilisation ?
+
+\vspace{1cm}
+
+# Description des bases de données : méthodologie et contenu 
+
+## Origine et contenu des données
+
+Détails sur la base happiness
+
+Voici ce qu'on sait à son sujet :
+
+    Source d’origine : Les données ont été utilisées dans l'édition du livre de Wooldridge, souvent dans un des chapitres sur les modèles de régression linéaire.
+
+    Contenu : Elle contient des variables liées au niveau de bonheur auto-déclaré d'individus, ainsi que des variables explicatives comme le revenu, l’âge, la santé, l’emploi, le statut marital, etc.
+
+    Origine des données : Wooldridge compile ces jeux de données à partir d’enquêtes réelles, souvent issues de sources publiques comme le General Social Survey (GSS) aux États-Unis ou d'autres bases en accès libre. Pour happiness, bien que le livre ne donne pas toujours les sources primaires exactes, il est probable que ce soit issu d'une enquête américaine sur la qualité de vie ou le bien-être.
+
+Objectif de la base
+
+Le but principal de cette base n’est pas une publication académique originale, mais plutôt :
+
+    Servir d’exemple pédagogique pour appliquer les méthodes économétriques (régressions, inférences, etc.).
+
+    Illustrer comment interpréter des résultats statistiques dans un contexte social (ici, le bonheur et ses déterminants économiques/sociaux).
+
+    Montrer des limites des corrélations simples entre revenu et bonheur, en tenant compte d'autres variables.
+
+Qui l’a “faite” ?
+
+    Jeffrey Wooldridge n’a pas lui-même mené l’enquête, mais a rassemblé et adapté les données à des fins pédagogiques.
+
+    Il a préparé et nettoyé les jeux de données pour qu’ils soient exploitables directement dans ses exemples de manuels.
+
+
+```{r}
+
+data_caract_2023[,c(1:9, 11:13)] |> 
+   head(2) |>
+  kable(booktabs = TRUE, 
+        caption = "Extrait des données de la rubrique 'Caractéristiques'") |> 
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10) |> 
+  add_footnote("Source : Base ONISR (2023)", notation = "symbol")
+```
+
+```{r}
+data_lieux_2023[, -c(4:7, 9:11, 13)]|> 
+   head(2) |>
+  kable(booktabs = TRUE, 
+        caption = "Extrait des données de la rubrique 'Lieux'") |> 
+  kable_styling(latex_options = c("striped", "hold_position","scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10) |> 
+  add_footnote("Source : Base ONISR (2023)", notation = "symbol")
+```
+```{r}
+data_usagers_2023[, 1:10]|> 
+   head(2) |>
+  kable(booktabs = TRUE, 
+        caption = "Extrait des données de la rubrique 'Usagers'") |> 
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10) |> 
+  add_footnote("Source : Base ONISR (2023)", notation = "symbol")
+```
+```{r}
+data_vehicules_2023|> 
+ head(2) |>
+  kable(booktabs = TRUE, 
+        caption = "Extrait des données de la rubrique 'Véhicules'") |> 
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10) |> 
+  add_footnote("Source : Base ONISR (2023)", notation = "symbol")
+```
+
+## Filtrage et nettoyage des données
+
+Pour cette étude, nous avons limité l’analyse aux accidents survenus dans le département de l’Indre-et-Loire (37), ce qui a impliqué un filtrage géographique des données. 
+
+Pour cette étude, nous avons voulu créer des modèles de prédiction sur des variables importantes qui ne contenait que peu de modalités manquantes. Cependant, la base de données originale contenait plus de 10% d'absence de réponses sur certaines questions. Certaines d'entre elles pouvaient être facilement expliqué tel gwbush00 et gwbush04 sur le vote des éléctions américaines de 2000 et 2004. D'autre pouvait nous faire défault comme les réponses sur un divorce passé, la perte d'un.e conjoint.e ou bien le temps passé de la télé. 
+
+Nous avons alors décidé de supprimer les variables inutilisable ou trop fortement corrélé ainsi que de retirer les individus n'ayant pas répondu à suffisament de questions. Conserver ces données auraient faussé le modèle et par ailleurs baisié notre interprétation des données. Le nettoyage a aussi permis une meilleure lisibilité et interprétation des modalités en traduisant des variables polytomiques en variables numérique. C'est le cas pour la variable de participation à des évements religieux qui change de variable décrivant les habitudes des individus à une varriable qui quantifie le nombre de participation annuel.
+
+Nous présentons ici un extrait limité aux variables les plus pertinentes pour notre analyse : 
+
+```{r}
+data_37|> 
+  select(Num_Acc, catv_grouped, manv_grouped, surf_grouped, lum_grouped, atm_grouped) |>
+ head(3) |>
+  kable(booktabs = TRUE, 
+        caption = "Extrait des données de notre base d'étude") |> 
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10) |> 
+  add_footnote("Source : Base ONISR (2023)", notation = "symbol")
+```
+
+\vspace{1cm}
+
+# Création de modèle de prédiction : ........
+
+## Méthodologie des modèles  .........
+
+EXPLICATION DE L'INTERET D'UTILISER UN MODèLE DE PREDICTION........
+
+Distinction entre :
+- l'analyse factorielle discrimante
+  et
+- Erreur de prédiction, Arbres, agrégation de modèles
+
+- A quoi sert les variables et pourquoi on les gardes ?
+- Quel indice pour choisir le meilleur modèle ?
+- Quel est le choix des valeurs des paramètrres ?
+- etendu des valeurs testé ?
+- seuil de prédiction si seuil de prédiction ?
+
+
+Tout ça permet d'avoir des modèles de prédiction optimisé suivant nos besoins, des modèles qui respectent .... nous permettras d'avoir des réponses le plus fiable possible. 
+
+<!-- Réalisation de l'ACM --> 
+```{r}
+# On définit les variables que l'on va utiliser. Les quantitatives, les qualitatives, et les variables supplémentaires.
+
+quali <- c(9, 57, 58, 60, 61, 62, 64, 66)
+quanti_sup <- c(32, 56)
+quali_sup <- c(3, 29, 31, 59, 63, 65) 
+pour_acm <- c(quali, quali_sup, quanti_sup)
+```
+
+```{r}
+# ACM sur tous les accidents de la route dans le 37 
+res.mca<- MCA(data_37[pour_acm], quanti.sup = 15:16, 
+               quali.sup = c(9:14),  
+               graph = FALSE, 
+               ncp = Inf) 
+```
+
+## Justification des valeurs ?
+
+Dans le but d'optimiser nos modèles nous avons des paramètres à optimiser. Les valeurs comme ... et .... nous donneras les modèles .... et ..... les plus fiable possible
+
+C'est .... qui justifira le choix des valeurs ... et des hyperparamètres. 
+
+Le graphique et le tableau ci-dessous, illustrant notre choix .... :
+
+```{r, fig.cap="Graphique des Valeurs Propres", fig.cap.location="bottom", fig.width=5, fig.height=4.5}
+
+graph_inertie <- fviz_eig(res.mca, addlabels = T) + 
+  labs(title="",
+       x = "Axes factoriels",
+       y = "Part d'inertie expliquée en %") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_bar(stat = "identity", fill = col_var)
+graph_inertie
+```
+
+```{r}
+data_vp <- res.mca$eig[1:10,] |> round(1) |> t()
+rownames(data_vp) <- c("Valeurs Propre", "Parts d'inertie %", "Parts cumulées")
+
+data_vp |> kable(caption = "Tableau des inerties") |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"), latex_options = "scale_down", font_size = 10)
+```
+
+L’analyse de la part d’inertie montre que les deux premiers axes expliquent ensemble `r res.mca$eig[2,3] |> round(1)`\% de la variance totale :
+
+-	L’axe 1 explique `r res.mca$eig[1,2] |> round(1)` \% de la variance.
+-	L’axe 2 explique `r res.mca$eig[2,2] |> round(1)` \% de la variance.
+
+Ces deux axes, bien qu’individuellement modestes, concentrent une proportion significative de l’information globale et sont donc retenus pour l’analyse.
+
+Le troisième axe explique `r res.mca$eig[3,2] |> round(1)` \% de la variance. Bien que moins important, il sera occasionnellement pris en compte pour approfondir certains aspects de l’interprétation.
+
+En revanche, les axes suivants expliquent chacun une part d’inertie oscillant entre 5 % et 4 %, sans qu’une chute marquée ne soit observée dans le graphique. Ces axes ne seront pas retenus dans notre étude principale, car leur contribution est relativement faible et ils n’apporteraient qu’une complexité supplémentaire à l’analyse.
+
+Ainsi, nous concentrons notre étude principalement sur les deux premiers axes, tout en considérant ponctuellement l’axe 3 pour enrichir l’interprétation.
+
+### Analyse factorielle discriminante
+<!--- 
+Le nuage des individus est une visualisation clé de l’analyse en composantes multiples (ACM), où chaque point représente un individu, c’est-à-dire un accident dans notre étude. Ce graphique permet de visualiser la distribution des `r nrow(data_37) ` accidents selon les deux premiers axes factoriels retenus.
+
+Pour évaluer la pertinence de la projection des individus sur ces axes, nous avons utilisé le cosinus carré (cos2), une mesure indiquant la qualité de la représentation des individus. Plus la valeur du cos2 est élevée, plus la projection d’un individu sur le plan factoriel est fidèle à sa position dans l’espace initial multidimensionnel. Les individus sont colorisés en fonction de leur cos2, ce qui permet d’identifier visuellement les points bien représentés (en rouge ou orange) et ceux dont la qualité de représentation est plus faible (en bleu ou vert).
+--->
+
+```{r, fig.cap="Nuage des individus", fig.cap.location="bottom"}
+
+fviz_mca_ind(res.mca, col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             ggtheme = theme_minimal(),
+             repel = FALSE, 
+             label = "non") + ggtitle(NULL)
+```
+
+<!---
+Le nuage des individus révèle une distribution dense et homogène des accidents, suggérant que ces derniers forment un seul groupe principal. Cette absence de séparation marquée entre sous-groupes d’accidents reflète un certain manque de différenciation dans la distribution des individus sur les deux premiers axes.
+
+Il est important de noter que nos individus sont des numéros d’accidents, ce qui rend difficile une observation intuitive de leurs caractéristiques uniquement à partir de leurs identifiants numériques. Malgré cette limitation, nous pouvons pousser plus loin notre étude des individus.
+
+Après étude des contributions des individus, il ressort qu’une majeure partie des individus participe significativement à la construction des axes. Cependant, nous pouvons remarquer que certains individus contribuent plus fortement à la formation des axes. Ces individus vont jouer un rôle clé dans l’interprétation des dimensions, car ils capturent des profils spécifiques ou extrêmes dans les données. 
+--->
+
+### Erreur de prédiction, Arbres, Agrégation de modèles
+
+<!---
+L’Analyse des Correspondances Multiples (ACM) met en lumière les variables et modalités qui structurent nos données, révélant des dimensions pertinentes pour comprendre les profils d’accidents de la route. Les contributions des variables aux axes factoriels, tout comme leur visualisation dans les nuages de variables et de modalités, permettent d’identifier les éléments clés influençant la construction de chaque axe.
+
+Le premier axe est principalement structuré par des variables liées au lieu de l’accident et aux infrastructures routières. Les modalités les plus contributives concernent la localisation (en agglomération ou hors agglomération), le type de route (autoroute, départementale, nationale, urbaine) et le type de véhicule impliqué, en particulier les engins personnels (vélos, trottinettes, fauteuils roulants). Par ailleurs, les accidents sur des voies cyclables se distinguent fortement. Ces observations soulignent l’importance de l’environnement infrastructurel dans la structuration de cette première dimension.
+
+Le deuxième axe se concentre sur les variables environnementales et météorologiques. Les conditions atmosphériques (pluie, temps sec, etc.), l’état de la chaussée (mouillée ou sèche) et la luminosité (jour ou nuit) jouent un rôle déterminant. Cet axe traduit une opposition entre des conditions météorologiques difficiles, souvent rencontrées durant les mois d’hiver comme novembre ou décembre, et des conditions normales, plus fréquentes pendant les périodes plus clémentes. Ainsi, ce second axe reflète une dimension environnementale essentielle, associant les caractéristiques saisonnières et météorologiques aux profils d’accidents.
+
+Quant au troisième axe, il met en lumière des situations plus spécifiques, particulièrement liées aux cyclistes et utilisateurs d’engins personnels. Les modalités les plus représentatives de cet axe incluent les accidents sur des voies cyclables, les manœuvres inhabituelles telles que traverser une chaussée, ainsi que les véhicules particuliers comme les engins personnels. Ce troisième axe révèle ainsi une dimension centrée sur les spécificités des accidents en milieu urbain impliquant des usagers vulnérables, notamment les cyclistes.
+
+--->
+
+\newpage
+
+```{r, fig.cap="Histogramme des contributions des variables aux axes", fig.cap.location="bottom", fig.width=5, fig.height=3}
+
+ggarrange(
+  fviz_contrib(res.mca, choice="var", axes =1,
+               fill = col_ind, color = "white") + 
+    theme(axis.text.x = element_text(size=3),title = element_text(size=10))+
+    ggtitle("Dimension 1"),
+  fviz_contrib(res.mca, choice="var", axes =2,
+               fill = col_ind, color = "white")+
+  theme(axis.text.x = element_text(size=3),title = element_text(size=10))+
+  ggtitle("Dimension 2"),
+  ncol = 2
+) 
+```
+
+Le nuage des variables offre une vue synthétique des relations entre les variables qualitatives et les axes factoriels. Les variables associées à l’infrastructure et aux véhicules se regroupent le long de l’axe 1, reflétant leur importance dans cette dimension. À l’inverse, les variables décrivant les conditions météorologiques et saisonnières se rassemblent autour de l’axe 2, confirmant leur rôle structurant dans ce contexte. Cette représentation facilite la compréhension globale des données et met en évidence les groupes de variables corrélées, renforçant les interprétations issues des contributions.
+
+```{r, fig.cap="Nuage des variables", fig.cap.location="bottom", fig.width=5, fig.height=3}
+
+fviz_mca_var(res.mca, choice = "mca.cor", geom=c("point","text"), invisible = NULL, 
+              repel = TRUE, ggtheme = theme_minimal(), col.var = col_bar) + ggtitle(NULL)
+```
+
+\newpage
+
+Enfin, le nuage des modalités, colorisé en fonction de la qualité de représentation, complète l’analyse en permettant de visualiser les relations entre les modalités des variables et les deux premiers axes factoriels. Les modalités situées à l’extrémité des axes traduisent des profils d’accidents distincts. Par exemple, sur l'axe 1, du côté des coordonnées positives, se trouvent des modalités liées à des accidents graves sur des routes hors agglomération, tels que ceux impliquant des poids lourds, sur des autoroutes ou des routes départementales ou nationales, avec des victimes décédées (indiqué par la modalité "tué"). À l’opposé, du côté des coordonnées négatives, des accidents plus urbains sont représentés : accidents sur des voies cyclables, impliquant des engins personnels ou des transports collectifs, avec une occurrence sur les trottoirs ou à proximité de voies cyclables.
+
+Sur l'axe 2, la partie supérieure regroupe des modalités associées à des conditions environnementales défavorables. Les accidents survenus dans des conditions météorologiques extrêmes, telles que des pluies fortes ou des tempêtes, sont particulièrement représentés, de même que ceux ayant eu lieu sur des sols mouillés. Ces circonstances sont souvent accompagnées de périodes hivernales, notamment en décembre, janvier et novembre, et de situations survenant principalement la nuit, accentuant ainsi le caractère risqué des conditions dans lesquelles ces accidents se produisent. À l'inverse, la partie inférieure de l'axe est dominée par des modalités correspondant à des conditions météorologiques plus favorables. Les accidents survenus sur un sol sec ou dans un état normal y sont largement représentés, tout comme ceux qui ont eu lieu durant les mois d'été, notamment en juin, juillet et septembre. Ces événements se produisent principalement en journée, sous des conditions lumineuses classiques, contribuant à des situations moins risquées sur le plan environnemental.
+
+Les modalités proches de l’origine des axes sont moins pertinentes car elles sont souvent trop fréquentes ou trop générales. Elles ne permettent pas de différencier efficacement les profils d'accidents spécifiques. 
+Ce nuage des modalités permet ainsi de mieux comprendre les relations entre les différentes dimensions des accidents et d'identifier des groupes distincts, en fonction de critères tels que le lieu, les conditions environnementales, ou encore le type de véhicules impliqués.
+
+```{r, fig.cap="Nuage des variables", fig.cap.location="bottom", fig.width=5, fig.height=3.5}
+
+fviz_mca_var(res.mca, axes=c(1,2), col.var = "cos2",
+             select.var = list(cos2 = 13),
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T, ggtheme = theme_minimal()) + ggtitle(NULL)
+```
+
+En somme, l’ACM dévoile trois dimensions principales : une première axée sur les infrastructures et les véhicules, une seconde liée aux conditions environnementales et météorologiques, et une troisième reflétant les contextes spécifiques aux cyclistes et utilisateurs d’engins personnels.
+
+Les variables quantitatives supplémentaires, bien qu'elles n’interviennent pas directement dans la construction des axes factoriels, offrent des informations complémentaires pour affiner l’interprétation des dimensions principales. La vitesse maximale autorisée (VMA) est corrélée positivement à l’axe 1 de façon importante, reliant les zones à haute vitesse (routes hors agglomération) aux modalités à droite de l’axe. L’année de naissance, quant à elle, est négativement corrélée à cet axe, montrant que les jeunes conducteurs se situent à gauche, souvent impliqués dans des accidents urbains. Tandis que les conducteurs plus âgés se trouvent à droite. Ces variables confirment les différences entre accidents urbains et hors agglomération.
+
+\vspace{1cm}
+
+# Clustering des accidents : des profils pour mieux comprendre les risques 
+
+## Classification Hiérarchique consolidée : Méthodologie
+
+Dans le prolongement de l’Analyse des Correspondances Multiples (ACM) réalisée précédemment, une classification hiérarchique consolidée a été effectuée afin d’identifier des groupes homogènes d’accidents de la route. Cette méthode permet de regrouper les individus en fonction de leurs similitudes dans l’espace factoriel défini par l’ACM, maximisant ainsi la cohérence interne des clusters tout en différenciant au mieux les groupes entre eux. La classification hiérarchique offre un cadre méthodologique rigoureux pour explorer les structures latentes dans les données, en tenant compte des dimensions principales révélées par l’ACM. En consolidant cette classification par un reclassement des individus, nous renforçons la stabilité et la pertinence des résultats. Cette étape constitue une avancée cruciale dans l’interprétation des données, permettant de mettre en lumière des profils types d’accidents et d’enrichir la compréhension des facteurs sous-jacents.
+
+<!-- ACM -->
+```{r}
+quali <- c(9, 57, 58, 60, 61, 62, 64, 66)
+quanti_sup <- c(32, 56)
+quali_sup <- c(3, 29, 31, 59, 63, 65)
+pour_acm <- c(quali, quali_sup, quanti_sup)
+```
+
+```{r}
+res.mca<- MCA(data_37[pour_acm], quanti.sup = 15:16, 
+               quali.sup = c(9:14),  
+               graph = FALSE, 
+               ncp = Inf) 
+```
+
+<!-- Clustering --> 
+```{r}
+velo_hcpc <- HCPC(res.mca, graph = FALSE, consol = TRUE)
+```
+
+Le dendogramme ci-dessous illustre les résultats de notre classification hiérarchique. Ce graphique représente le processus de regroupement progressif des individus selon le critère appliqué, ici le critère de Ward. Cette méthode cherche à maximiser la variance inter tout en minimisant la variance intra. Les branches du dendogramme indiquent les distances entre les groupes, permettant d’identifier des seuils pertinents pour la formation des clusters. 
+
+```{r, fig.cap="Dendogramme : Clustering with Ward method", fig.cap.location="bottom", fig.width=4, fig.height=2}
+
+fviz_dend(velo_hcpc, cex = 0.3, k_colors = "black") + ggtitle(NULL)
+```
+
+\newpage
+
+L’analyse du dendogramme ne nous permet pas de déterminer visuellement le découpage optimal. Ainsi une analyse supplémentaire des résultats de notre classification hiérarchique est nécessaire pour permettre une interprétation approfondie des données. 
+
+## Choix du nombre de clusters : Critères et Méthodes
+
+Pour déterminer le nombre optimal de clusters, nous nous sommes appuyés sur deux graphiques complémentaires présentés ci-dessous. Le premier illustre l’évolution de l’inertie intra-cluster en fonction du nombre de clusters, tandis que le second met en évidence le gain d’inertie inter-cluster. Ces deux indicateurs statistiques sont des outils fiables pour guider notre choix.
+
+```{r, fig.cap="Représentation de l'inertie inter et intra cluster", fig.cap.location="bottom"}
+
+k <- 20
+
+#  Calcul et visualisation de l'inertie intra-cluster
+plot_within <- (velo_hcpc$call$t$within[1:k]/velo_hcpc$call$t$within[1]) |> data.frame(within = _) |>
+  ggplot() + aes(x= 1:k,y=within) + geom_bar(stat = "identity", fill = col_ind, color="white", alpha= 0.8) +
+  labs(title = "Within cluster inertia",
+    x = "")
+# Calcul et visualisation des gains d'inertie inter-clusters 
+plot_inert_gain <- velo_hcpc$call$t$inert.gain[1:k] |> data.frame(inert_gain = _) |>
+  ggplot() + aes(x= 1:k,y= inert_gain) + geom_bar(stat = "identity", fill = col_ind, color="white", alpha = 0.8) +
+  labs(title = "Between inertia gain",
+       x="") 
+
+plot_within + plot_inert_gain
+```
+
+Le graphique de l’inertie intra-cluster montre une diminution progressive à mesure que le nombre de clusters augmente, ce qui est attendu : un nombre plus élevé de clusters permet une meilleure homogénéité au sein de chaque groupe. 
+
+Quant au graphique du gain d’inertie inter-cluster, il révèle une marche significative entre 10 et 11 clusters. Ce seuil marque une rupture claire, justifiant le choix de 10 clusters comme solution optimale.
+
+Il convient de noter que l’option d’un 11ᵉ cluster aurait pu être envisagée. Toutefois, une analyse plus approfondie a montré qu’un cluster supplémentaire n’apportait pas de nouvelles informations interprétables et rendait l’analyse plus complexe. Ainsi, le choix de 10 clusters représente un équilibre entre la qualité statistique et la simplicité interprétative.
+
+
+## Exploration visuelle des profils types d'accidents
+
+Après avoir déterminé le nombre optimal de clusters, il est essentiel de les visualiser afin de mieux comprendre leur formation et leur structure. Pour ce faire, nous avons utilisé deux représentations graphiques complémentaires :
+
+-	Le dendogramme colorisé, qui illustre de manière hiérarchique les relations entre les individus et met en avant les clusters définis.
+-	Le nuage des individus colorisé, enrichi par des ellipses représentant chaque cluster. Ce graphique situe les groupes dans l’espace factoriel défini par l’ACM, offrant une perspective globale sur leur positionnement et leur proximité relative.
+
+\newpage
+
+```{r, fig.cap="Visualisation des clusters", fig.cap.location="bottom", fig.width=6, fig.height=4}
+
+hcpc_10 <- HCPC(res.mca, graph = FALSE, consol = TRUE, nb.clust = 10)
+
+clusters <- table(hcpc_10$data.clust$clust)
+sorted_indices <- order(clusters)
+df_sorted <- clusters[sorted_indices]
+
+# Vérification des longueurs (pour éviter des erreurs)
+if (length(df_sorted) > length(cluster_colors)) {
+  stop("Pas assez de couleurs pour le nombre de clusters.")
+}
+cluster_colors <- cluster_colors[1:length(df_sorted)]  # Ajuster le nombre de couleurs
+
+# Associer les couleurs triées aux clusters réordonnés
+color_mapping <- setNames(cluster_colors, names(df_sorted))
+
+
+dendo <- fviz_dend(hcpc_10, cex = 0.3, 
+          k_colors = color_mapping) + ggtitle("Dendogramme")
+
+cluster <- fviz_cluster(hcpc_10, geom="point", ellipse = TRUE, show.clust.cent = FALSE, alpha = 0.8,
+            palette = color_mapping,
+             ggtheme = theme_minimal()) + 
+  labs(title= "Cluster visualization") +
+  theme(legend.position = "bottom")
+
+dendo + cluster
+```
+
+Cependant, la visualisation de ces groupes n’est pas toujours évidente sur ces graphiques. Cela s’explique notamment par la disparité des tailles des clusters : certains groupes sont très petits, regroupant à peine `r min(table(hcpc_10$data.clust$clust))` individus, tandis que d'autres sont beaucoup plus grands, comme le cluster 7, qui rassemble la quasi-totalité des individus (`r max(table(hcpc_10$data.clust$clust))` individus).
+
+Ainsi, les clusters de plus petite taille se distinguent par des modalités très spécifiques, ce qui les rend particulièrement intéressants d’un point de vue interprétatif. En revanche, le cluster 7 représente un groupe plus généraliste, regroupant des individus partageant des caractéristiques moins distinctives. Ces observations soulignent la diversité et le niveau de détail des groupes identifiés. 
+
+Afin de compléter l’analyse de la visualisation des clusters, le tableau ci-dessous présente la répartition des individus au sein de chaque cluster. Cette représentation permet de mieux appréhender l’importance relative de chaque groupe, en mettant en évidence la variabilité de leur taille, allant de clusters très restreints à des regroupements beaucoup plus larges.
+
+```{r}
+# Création du tableau
+table_clusters <- as.data.frame(table(hcpc_10$data.clust$clust))
+colnames(table_clusters) <- c("Cluster", "Nombre d'individus")
+
+# Style du tableau
+table_clusters |> t() |>
+  kable(caption = "Nombre d'individus par cluster") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                full_width = FALSE, 
+                font_size = 10) |>
+  column_spec(1, bold = TRUE) 
+```
+
+Grâce à ce test, il est possible d’identifier les variables catégorielles les plus discriminantes pour la segmentation des clusters. Une p-value faible (inférieure au seuil conventionnel de 0,05) indique que la variable est significativement associée aux clusters, ce qui signifie qu’elle joue un rôle déterminant dans la différenciation des groupes.
+
+Parmi les variables analysées, celles liées à la catégorie du véhicule, la manœuvre effectuée, l’état de la surface de la route, les conditions atmosphériques, et la catégorie de route se sont révélées particulièrement pertinentes pour expliquer et segmenter les clusters. Ces résultats confirment l’importance de ces dimensions dans la structuration des profils d’accidents.
+
+
+## Compréhension des Groupes : Interprétation des Clusters
+ 
+### cluster 1
+
+Le cluster 1 se distingue par des accidents impliquant uniquement des engins personnels (vélos, trottinettes, skateboards, etc.), sans la présence d’autres types de véhicules. Tous ces accidents ont eu lieu à proximité d'une voie cyclable ou directement sur celle-ci. En comparaison avec l'ensemble des accidents impliquant des engins personnels (`r round(hcpc_10$desc.var$category$"1"[2,3], 1)`\%), ce cluster ne représente que `r round(hcpc_10$desc.var$category$"1"[2,1], 1)`\% des accidents où un engin personnel est en cause.
+
+Ce cluster semble donc correspondre à des accidents principalement liés aux vélos sur des voies cyclables urbaines, dans des conditions météorologiques normales.
+
+
+### cluster 2
+
+Le cluster 2 partage des caractéristiques similaires avec le cluster 1, notamment en termes de localisation des accidents en milieu urbain, sur des pistes cyclables. Cependant, à la différence du cluster 1, ce groupe inclut plusieurs types de véhicules. En effet, `r round(hcpc_10$desc.var$category$"2"[3,2], 0)`\% des accidents impliquent des engins personnels, tandis que `r round(hcpc_10$desc.var$category$"2"[27,2], 0)`\% concernent des voitures.
+
+Ce cluster reflète des accidents sur des pistes cyclables en ville, mais avec une plus grande diversité de véhicules impliqués.
+
+
+### cluster 3
+
+Le cluster 3 regroupe des accidents survenus en ville, spécifiquement sur des trottoirs. En effet, tous les individus de ce groupe ont été impliqués dans des accidents sur trottoir, une modalité relativement rare, puisque seulement `r round(hcpc_10$desc.var$category$"3"[1,3], 1)`\% des accidents dans l'ensemble de la base de données concernent cette situation. Cette rareté a probablement contribué à la formation distincte de ce cluster. De plus, `r round(hcpc_10$desc.var$category$"3"[11,2], 1)`\% des accidents de ce cluster ont eu lieu en plein jour, ce qui est un autre facteur marquant de cette catégorie. En termes de gravité, `r round(hcpc_10$desc.var$category$"3"[12,2], 0)`\% des accidents ont entraîné des blessés, ce qui est cohérent avec le fait que ce cluster implique principalement des piétons, des usagers particulièrement vulnérables.
+
+Le cluster 3 représente des accidents urbains sur des trottoirs, souvent survenus en journée, et impliquant principalement des piétons. La haute proportion d'accidents avec blessés souligne la vulnérabilité de ces usagers.
+
+
+### cluster 4
+
+Le cluster 4 regroupe tous les accidents impliquant des transports en commun, soit `r table_clusters[4,2]` accidents en 2023. Ces accidents se produisent presque exclusivement en milieu urbain, sur la chaussée. En ce qui concerne les autres modalités associées à ce cluster, leur interprétation est moins évidente, car elles sont relativement partagées. Par exemple, 50% des accidents ont eu lieu dans des conditions atmosphériques normales (avec un sol sec), tandis que l'autre moitié s'est produite dans des conditions météorologiques modérées (avec un sol mouillé). Ainsi, la modalité la plus discriminante de ce cluster reste le type de véhicule, à savoir les transports en commun.
+
+Le cluster 4 représente principalement des accidents en milieu urbain impliquant des transports en commun, la variable "type de véhicule" étant le critère le plus déterminant dans la constitution de ce groupe. Les autres facteurs, bien que présents, ne semblent pas aussi discriminants.
+
+### cluster 5
+
+Le cluster 5 est un groupe très spécifique et relativement petit, composé de seulement `r table_clusters[5,2]` individus. Ce cluster se distingue par un facteur rare : la présence de verglas sur la route le jour de l’accident. Cette modalité est peu fréquente dans l’ensemble des données, ce qui est cohérent avec le contexte local, puisque le département de l’Indre-et-Loire n’est pas particulièrement connu pour ses périodes de gel sévères.
+
+Le cluster 5 représente des accidents isolés, survenus dans des conditions météorologiques extrêmes liées au verglas, un phénomène rare mais potentiellement très dangereux.
+
+### cluster 6
+
+Le cluster 6 semble principalement être défini par la modalité "Autre" de la variable "type de manœuvre effectuée", qui est relativement rare. Ce groupe présente des accidents survenus sur la chaussée, impliquant principalement des voitures, mais aussi dans une moindre mesure des vélos. Une caractéristique notable de ce cluster est que près de deux tiers des accidents ont causé des blessures, tandis qu'un tiers des accidents a concerné des individus indemnes.
+
+### cluster 7
+
+Le cluster 7 est le cluster le plus peuplé, représentant presque la totalité des accidents. Il est principalement constitué d'accidents impliquant des voitures (`r round(hcpc_10$desc.var$category$"7"[1,2], 0)`\%), ce qui reflète bien la proportion générale observée dans la base de données. Ces accidents se produisent majoritairement sur la chaussée. Les facteurs environnementaux, tels que les conditions météorologiques, ne semblent pas jouer un rôle déterminant dans ce cluster, la majorité des accidents ayant eu lieu dans des conditions atmosphériques dites "normales". En conclusion, le cluster 7 représente de manière générale les accidents de notre base de données, agissant ainsi comme un cluster "moyen" ou de référence.
+
+### cluster 8
+
+Le cluster 8 rassemble les accidents survenus dans des conditions météorologiques extrêmes, telles que des tempêtes, de fortes pluies ou des vents violents, accompagnés d'une surface de route mouillée. Il ressort que la majorité de ces accidents ont eu lieu pendant les mois de mai et novembre, des périodes caractérisées par des variations climatiques importantes et des intempéries imprévisibles. De plus, il est à noter que les accidents du cluster 8 se sont principalement produits sur des trajectoires rectilignes, ce qui suggère que la manœuvre du véhicule n’a pas été un facteur déterminant dans la survenue de l’accident.
+
+### cluster 9
+
+Le cluster 9 regroupe les accidents impliquant des poids lourds. Une caractéristique notable de ce groupe est la prédominance des trajets effectués dans un cadre professionnel, ce qui est en accord avec le type de véhicule concerné. En effet, `r round(hcpc_10$desc.var$category$"9"[10,2], 0)`\% des accidents surviennent pendant la journée, ce qui peut être expliqué par les restrictions horaires concernant les chauffeurs routiers. 
+
+### cluster 10
+
+Le cluster 10 est difficile à interpréter en raison de sa petite taille (seulement `r table_clusters[10,2]` individus). Il regroupe les accidents pour lesquels les forces de l'ordre ont codifié la condition atmosphérique comme « autre », une modalité relativement rare dans notre échantillon. Cette rareté semble avoir joué un rôle dans la formation de ce cluster. De plus, on peut supposer que la modalité « sol mouillé » associée à ces accidents indique que la condition « autre » pourrait correspondre à des intempéries spécifiques, probablement des conditions météorologiques particulières qui ont été mal renseigné lors du rapport des forces de l’ordre. 
+
+\vspace{1cm}
+
+# Synthèse des résultats et recommandations en prévention routière 
+
+L'analyse des accidents de la route en Indre-et-Loire, à travers l’Analyse des Correspondances Multiples (ACM) et la Classification Hiérarchique (clustering), a permis de dégager des enseignements précieux sur les facteurs structurant ces accidents. L'ACM a révélé que les accidents peuvent être principalement expliqués par deux grands axes factoriels : les conditions environnementales et le lieu de l'accident. Le premier axe met en évidence la distinction entre accidents survenant en milieu urbain ou hors agglomération, et les types de véhicules impliqués (engins personnels, véhicules légers, poids lourds, etc.), tandis que le second axe met en lumière l'importance des facteurs météorologiques et de l'état de la surface de la route (par exemple, verglas ou sol mouillé).
+
+Le processus de clustering a ensuite permis d’identifier des groupes homogènes d'accidents, révélant des profils spécifiques et des typologies d'incidents ayant des caractéristiques communes. Ces groupes, issus de la classification hiérarchique, se distinguent notamment par des critères tels que la présence de vélos et trottinettes sur les voies cyclables, les accidents impliquant des poids lourds, ou encore les incidents en conditions météorologiques extrêmes. 
+En combinant ces deux méthodes, nous avons pu cerner les principaux facteurs contributifs aux accidents dans la région. 
+
+Cependant, cette étude présente certaines limites. Tout d'abord, elle se limite au département d'Indre-et-Loire (37), ce qui restreint la généralisation des résultats à d’autres régions, la France étant un pays avec une grande diversité de climat. De plus, certaines variables potentielles, telles que la consommation d’alcool, l’utilisation du téléphone au volant, n’ont pas été intégrées dans cette analyse, ce qui pourrait constituer un axe d’amélioration pour des études futures. 
+
+Enfin, à partir de ces résultats, plusieurs recommandations pour la sécurité routière peuvent être proposées. D'une part, des campagnes de prévention ciblées sur les zones identifiées comme à risque pourraient être mises en place. Par exemple, au sein des zones urbaines avec une forte concentration de personnes vulnérables, une amélioration des infrastructures cyclables pourrait contribuer à réduire le nombre d'accidents. D'autre part, des initiatives visant à améliorer la circulation sous conditions météorologiques extrêmes, notamment lors de périodes de verglas ou de tempêtes, devraient être renforcées. 
+
+En conclusion, cette étude ouvre la voie à une meilleure compréhension des facteurs contribuant aux accidents de la route en Indre-et-Loire, tout en fournissant des pistes concrètes pour améliorer la sécurité routière et réduire les risques d’accidents sur le long terme.
+
+\newpage
+
+# Annexe
+
+Contributions des individus aux axes 1 et 2 :
+
+```{r, fig.cap="Histogramme des contributions des individus aux axes", fig.cap.location="bottom", fig.width=5, fig.height=3.5}
+
+ggarrange(
+  fviz_contrib(res.mca, choice="ind", axes =1,
+             fill = col_bar, color = col_bar,
+             ggtheme = theme_classic()) + 
+    theme(axis.text.x = element_text(size=1),title = element_text(size=9))+
+    ggtitle("Dimension 1"),
+  fviz_contrib(res.mca, choice="ind", axes =2,
+               fill = col_bar, color = col_bar,
+               ggtheme = theme_classic()) + 
+    theme(axis.text.x = element_text(size=1),title = element_text(size=9))+
+    ggtitle("Dimension 2"),
+  ncol = 2
+)
+```
+
+Contributions des variables à l'axe 3 :
+
+```{r, fig.cap="Histogramme des contributions des variables à l'axe 3", fig.cap.location="bottom", fig.width=5, fig.height=3}
+
+fviz_contrib(res.mca, choice="var", axes =3,
+               fill = col_bar, color = col_bar) + 
+    theme(axis.text.x = element_text(size=3),title = element_text(size=8)) +
+  ggtitle("Dimension 3")
+```
+
+\newpage
+
+Tableau des coefficients corélation :
+
+```{r, tbl.cap="Corrélation des variables - Dimension 1"}
+
+# Dim 1
+a <- cbind(
+  round(dimdesc(res.mca)$`Dim 1`$quali[,1], 2),
+  dimdesc(res.mca)$`Dim 1`$quali[,2])
+colnames(a) <- c("R2", "p-value")
+
+a %>% kable(digits = 16) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+```{r, tbl.cap="Corrélation des variables - Dimension 2"}
+
+# Dim 2
+b <- cbind(
+  round(dimdesc(res.mca)$`Dim 2`$quali[,1], 2),
+  dimdesc(res.mca)$`Dim 2`$quali[,2])
+colnames(b) <- c("R2", "p-value")
+
+b %>% kable(digits = 16) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+\newpage
+
+Nuage des modalités : axe 3 et axe 4
+
+```{r, fig.cap="Nuage des modalités : axe 3 et 4", fig.cap.location="bottom", fig.width=6, fig.height=4}
+
+fviz_mca_var(res.mca, axes=c(3,4), col.var = "cos2",
+             select.var = list(cos2 = 20),
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T, ggtheme = theme_minimal()) + ggtitle(NULL)
+```
+
+Représentation des variables suplémentaire quantitative (axe 1 et axe 2) :
+
+```{r, fig.cap="Représentation des variables supplémentaires quantitatives", fig.cap.location="bottom", fig.width=3.5, fig.height=2.5}
+
+fviz_mca_var(res.mca, choice = "quanti.sup", geom=c("arrow","text"),invisible = "quali.sup", 
+               repel = TRUE, ggtheme = theme_minimal(), col.var = col_var) + ggtitle(NULL)
+```
+
+\newpage
+
+Tableau interprétation clusters :
+
+```{r, tbl.cap="Cluster 1"}
+
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"1"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 1") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 2"}
+
+options(scipen = 0, digits = 2)
+
+hcpc_10$desc.var$category$"2"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 2") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 3"}
+
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"3"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 3") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 4"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"4"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2) , caption = "Cluster 4") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 5"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"5"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 5") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+\newpage
+
+```{r, tbl.cap="Cluster 6"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"6"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 6") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 7"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"7"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 7" ) |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 8"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"8"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 8" ) |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 9"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"9"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 9") |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```
+
+```{r, tbl.cap="Cluster 10"}
+options(scipen = 0, digits = 4)
+
+hcpc_10$desc.var$category$"10"[1:4,1:4]|> 
+  kable(digits=c(1, 1, 1, 200, 2), caption = "Cluster 10" ) |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                position = "center", 
+                full_width = FALSE,
+                font_size = 10)
+```

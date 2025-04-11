@@ -11,6 +11,9 @@ library(vip)           # Importance des variables
 library(ggplot2)       # Visualisation
 library(themis)        # Sur-échantillonnage
 library(doParallel)    # Parallélisation
+library(future)
+library(dplyr)
+library(readr)
 ```
 
 ```{r}
@@ -31,12 +34,21 @@ test_data <- testing(data_split)
 
 ```{r}
 # Préparation des données avec normalisation et sur-échantillonnage
-rf_recipe <- recipe(vhappy ~ ., data = train_data) |> 
-  step_normalize(all_numeric_predictors()) |>  # Normalisation des variables numériques
-  step_dummy(all_nominal_predictors()) |>     # Encodage des variables catégoriques
-  step_zv(all_predictors()) |>                # Suppression des variables sans variance
-  step_corr(all_numeric_predictors(), threshold = 0.9) |>  # Suppression des variables très corrélées
-  step_upsample(vhappy)                       # Sur-échantillonnage de la classe minoritaire
+#rf_recipe <- recipe(vhappy ~ ., data = train_data) |> 
+#  step_normalize(all_numeric_predictors()) |>  # Normalisation des variables numériques
+#  step_dummy(all_nominal_predictors()) |>     # Encodage des variables catégoriques
+#  step_zv(all_predictors()) |>                # Suppression des variables sans variance
+#  step_corr(all_numeric_predictors(), threshold = 0.9) |>  # Suppression des variables très corrélées
+#  step_upsample(vhappy)                       # Sur-échantillonnage de la classe minoritaire
+```
+
+```{r}
+rf_recipe <- train_data  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  #step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
 ```
 
 ```{r}
@@ -122,13 +134,13 @@ ggplot(roc_curve_rf) +
   theme_minimal()
 
 rf_auc <- rf_predictions |> 
-  roc_auc(truth = vhappy, .pred_yes)
+  roc_auc(truth = vhappy, .pred_no)
 print(rf_auc)
 ```
-
+ 
 ```{r}
 ggplot(roc_curve_rf) +
-  geom_line(aes(x = 1 - specificity, y = sensitivity), color = "blue", size = 1) + # Courbe ROC
+  geom_line(aes(x = 1 - specificity, y = sensitivity), color = "blue", linewidth = 1) + # Courbe ROC
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +      # Bissectrice
   labs(
     title = "Courbe ROC - Random Forest",
@@ -178,5 +190,5 @@ La variable est modérément corrélée à (0.515). Cela peut introduire de la r
 
 ```{r}
 # Sauvegarde du modèle final
-save(rf_fit, file = "rf_model_final.RData")  # Sauvegarde du modèle final pour une lecture facile
+save(rf_recipe,rf_spec,rf_wf,rf_grid,data_cv,rf_tune_res,best_params,rf_final_wf,rf_fit,rf_metrics,rf_predictions,confusion_matrix_rf,roc_curve_rf,rf_auc,engine_rf,rf_spec, file = "rf_model_final.RData")  # Sauvegarde du modèle final pour une lecture facile
 ```

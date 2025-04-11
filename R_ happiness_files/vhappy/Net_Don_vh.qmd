@@ -121,7 +121,7 @@ train <- sample(1:n, size = N) # découpage de la data train
 dataTrain_att <- ID_v2 %>% dplyr::slice(train)
 dataTest_att <- ID_v2 %>% dplyr::slice(-train)
 
-rec_att <- recipe(~., data = ID_v2) %>% 
+rec_att <- recipe(vhappy~., data = ID_v2) %>% 
   step_impute_knn(attend, neighbors = 5)
 
 rec_att_prep <- prep(rec_att, training = dataTrain_att)
@@ -139,7 +139,7 @@ dataTest_i <- ID_v3 %>% dplyr::slice(-train)
 # induce some missing data at random
 set.seed(1)
 
-rec_i <- recipe(~ .,data = ID_v3) %>% 
+rec_i <- recipe(vhappy~.,data = ID_v3) %>% 
   step_impute_knn(income, neighbors = 5)
 
 rec_i_prep <- prep(rec_i, dataTrain_i)
@@ -178,7 +178,7 @@ train <- sample(1:n, size = N) # découpage de la data train
 dataTrain_tv <- ID_v5 %>% dplyr::slice(train)
 dataTest_tv <- ID_v5 %>% dplyr::slice(-train)
 
-rec_tv <- recipe(~., data = ID_v5) %>% 
+rec_tv <- recipe(vhappy~., data = ID_v5) %>% 
   step_impute_knn(tvhours, neighbors = 5)
 
 rec_tv_prep <- prep(rec_tv, training = dataTrain_tv)

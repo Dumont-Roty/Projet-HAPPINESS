@@ -118,19 +118,18 @@ Les paramètres sont optimisés on peut maintenant faire travailler les modèles
 
 ```{r}
 collect <- function(x){
-  last_fit(x,split = split_data) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
+  last_fit(x,split = data_split) |> # "je veux travailler sur tel truc en sachant le partage de donnée"
     collect_predictions()
 }
 ```
 
 ```{r}
 svm_rad_result <- svm_rad_final_wf |> collect()
-svm_rad_result <- svm_rad_result[-nrow(svm_rad_result),]
+#svm_rad_result <- svm_rad_result[-nrow(svm_rad_result),]
 ```
 
 On va construitre un tableau qui continent les résultats pour chaque individus de la base de donnée testing, en fonctioon de la méthode utilisé
 Pour chasue individu : - résultat, -méthode utilisé
-
 
 
 Comparons les modèles :
@@ -142,5 +141,5 @@ roc(test_data$vhappy, svm_rad_result$.pred_no) %>% auc()
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
 
 ```{r}
-save(svm_rad_result, file = "model_svm_rad.RData")
+save(svm_rad_mod,svm_rad_wf,dat_folds,svm_rad_grid,tune_res_svm_rad,svm_rad_final_wf,svm_rad_result, file = "model_svm_rad.RData")
 ```

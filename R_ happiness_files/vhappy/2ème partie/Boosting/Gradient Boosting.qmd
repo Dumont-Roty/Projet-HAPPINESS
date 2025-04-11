@@ -1,7 +1,6 @@
 ---
 title: "Gradient Boosting"
 format: html
-editor: visual
 ---
 
 ```{r}
@@ -11,31 +10,26 @@ library(xgboost)       # Gradient Boosting
 library(vip)           # Importance des variables
 library(pROC)          # Analyse de la courbe ROC
 library(doParallel)    # Parallélisation pour accélérer
-
+library(future)
 ```
 
 ```{r}
-
-data <- read_csv("E:/Happy/data/vhappy.csv") %>%
-  mutate(across(where(is.character), as.factor)) %>%
-  drop_na()  # Suppression des NA résiduels
+data <- read_csv("D:/Université de Tours/Master MEcEn/S8/8-2 Classification supervisée/Projet HAPPINESS/R_ happiness_files/vhappy/vhappy.csv",
+                  na = c("", "NA"))
+data <- data %>% mutate(across(everything(), ~replace_na(.x, "NA")))
+data <- data %>% mutate(across(where(is.character), as.factor))
+data <- data %>% mutate(across(where(is.logical), as.factor))
 ```
 
 ```{r}
-# Division des données
-set.seed(73)
-split_data <- initial_split(data, prop = 0.75, strata = vhappy)
-data_train <- training(split_data)
-data_test <- testing(split_data)
-
-
-# Vérification des données
-str(data_train)
-
+set.seed(1)
+data_split <- initial_split(data, prop = 0.75, strata = vhappy)
+train_data <- training(data_split)
+test_data <- testing(data_split)
 ```
 
 ```{r}
-boost_recipe <- recipe(vhappy ~ ., data = data_train) |> 
+boost_recipe <- recipe(vhappy ~ ., data = train_data) |> 
   step_normalize(all_numeric_predictors()) |>  # Normalisation des variables numériques
   step_dummy(all_nominal_predictors()) |>     # Encodage des facteurs en indicateurs
   step_mutate(across(where(is.logical), as.numeric)) |> # Transformation des colonnes logiques en numériques
@@ -72,12 +66,10 @@ boost_grid <- grid_random(
 
 ```{r}
 # Validation croisée
-data_cv <- vfold_cv(data_train, v = 5, strata = vhappy)
+data_cv <- vfold_cv(train_data, v = 5, strata = vhappy)
 
-# Activation de la parallélisation
-n_cores <- parallel::detectCores(logical = TRUE)
-registerDoParallel(cores = n_cores - 2) # Réserver 2 cœurs pour d'autres tâches
-
+n_core <- parallel::detectCores(logical = TRUE)
+plan(multisession, workers = parallel::detectCores() - 1)
 ```
 
 ```{r}
@@ -89,7 +81,7 @@ boost_tune_res <- tune_grid(
 )
 
 # Arrêter la parallélisation après l'entraînement
-stopImplicitCluster()
+plan(sequential)
 
 ```
 
@@ -107,13 +99,14 @@ boost_final_wf <- boost_wf |>
 
 ```{r}
 boost_fit <- boost_final_wf |> 
-  last_fit(split_data)
+  last_fit(data_split)
 
 # Collecte des métriques
 boost_metrics <- boost_fit |> collect_metrics()
 print(boost_metrics)
 
 boost_predictions <- boost_fit |> collect_predictions()
+save(boost_predictions, file = "bp.RData") 
 
 ```
 
@@ -126,8 +119,6 @@ autoplot(confusion_matrix_boost, type = "heatmap") +
 
 ```
 
-```{}
-```
 
 ##  {.smaller}
 
@@ -140,5 +131,5 @@ la médiane est **très basse (0.15)**, alors que la moyenne est autour de **0.4
 
 ```{r}
 # Sauvegarde du modèle final
-save(boost_fit, file = "boost_model_final.RData")  
+save(boost_recipe,boost_spec,boost_wf,boost_grid,data_cv,boost_tune_res,best_params,boost_final_wf,boost_fit,boost_metrics,boost_predictions,confusion_matrix_boost, file = "boost_model_final.RData")  
 ```

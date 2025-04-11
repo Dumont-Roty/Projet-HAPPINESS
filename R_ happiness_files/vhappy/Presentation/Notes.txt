@@ -1,0 +1,24 @@
+Comment on transformé la base données :
+- reg16, happy,gwbush00-04, black female, y---- car CORRELATION ou TROP DE NA
+- élimination des individus avec PLUS DE 3 variables manquantes
+- attend => traduction de factor en num
+- DivWid => réduit NA
+- kids => réduction de var
+
+Imputation des données manquantes  :
+- attend en fonction des KNN (5)(2/3)
+- income en fonction des KNN (5)(2/3)
+- tvhours en fonction des KNN (5)(2/3)
+
+Suppresion des individus de Prestige avce NA (441)
+
+suppression des individus avec des NA (21)
+
+Suppression d'educ car très corrélé à prestige
+
+
+
+Metric :
+ROC AUC (Area Under the Receiver Operating Characteristic Curve)
+
+    Définition : Le ROC AUC mesure la capacité du modèle à distinguer entre les classes, en analysant le taux de vrais positifs (TPR) par rapport au taux de faux positifs (FPR) à différents seuils de classification

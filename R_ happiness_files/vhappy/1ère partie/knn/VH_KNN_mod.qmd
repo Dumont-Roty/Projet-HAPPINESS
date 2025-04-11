@@ -18,6 +18,7 @@ library(pROC)
 library(kknn)
 library(doParallel)
 library(FactoMineR)
+library(future)
 ```
 
 # Importation des données
@@ -91,7 +92,7 @@ dat_folds <- vfold_cv(train_data, v = 5, strata = vhappy) # 5 couches qui respec
 # nombre de coeurs 
 n_core <- parallel::detectCores(logical = TRUE)
 #
-registerDoParallel(cores = n_core -1) 
+plan(multisession, workers = parallel::detectCores() - 1)
 # on laisse un coeur pour le reste
 # réalisation des commandes nécéssitant la parallélisation
 
@@ -102,7 +103,7 @@ tune_res_knn <- tune_grid(knn_wf,
 
 autoplot(tune_res_knn) # necessite le package kknn
 
-stopImplicitCluster()# ferme le cluster
+plan(sequential)
 ```
 
 Si on choisit la metrique (air sous la courbe ROC), on peut se poser la question suivante :
@@ -148,5 +149,5 @@ Si proche de la bissectrice, le hasard est aussi bon que le modèle.
 
 
 ```{r}
-save(knn_result, file = "model_KNN.RData")
+save(knn_mod,knn_wf,dat_folds,knn_grid,tune_res_knn,knn_best,knn_final_wf,collect,knn_result, file = "model_KNN.RData")
 ```

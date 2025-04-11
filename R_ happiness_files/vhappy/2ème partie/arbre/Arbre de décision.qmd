@@ -66,10 +66,12 @@ test_data <- testing(data_split)
 ```
 
 ```{r}
-rec <- recipe(vhappy ~ ., data = train_data) |> 
-  step_normalize(all_numeric_predictors()) |> 
-  step_dummy(all_nominal_predictors()) |> 
-  step_zv(all_predictors())
+rec <- train_data  %>% recipe(vhappy~.) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  #step_dummy(all_nominal_predictors()) %>% 
+  step_other(all_nominal_predictors(), threshold = 0.05) %>% 
+  step_zv(all_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
 ```
 
 ```{r}
@@ -134,8 +136,8 @@ arbre_wf <- workflow() |> add_model(arbre_mod) |>
 ```
 
 ```{r}
-n_cores <- parallel::detectCores(logical = TRUE)
-registerDoParallel(cores = n_cores - 2)
+n_core <- parallel::detectCores(logical = TRUE)
+plan(multisession, workers = parallel::detectCores() - 1)
 
 arbre_grid <- grid_regular(
   cost_complexity(range = c(-15, -0.1)),
@@ -143,16 +145,14 @@ arbre_grid <- grid_regular(
   levels = 10
 )
 
-system.time(
-  arbre_tune_res <- tune_grid(
-    arbre_wf,
-    resamples = data_cv,  # Validation croisée
-    grid = arbre_grid,
-    metrics = metric_set(accuracy)
-  )
+arbre_tune_res <- tune_grid(
+  arbre_wf,
+  resamples = data_cv,  # Validation croisée
+  grid = arbre_grid,
+  metrics = metric_set(accuracy)
 )
 
-stopImplicitCluster()
+plan(sequential)
 
 # Visualisation des résultats
 autoplot(arbre_tune_res) +
@@ -175,7 +175,7 @@ test_performance_arbre <- arbre_fit |> collect_metrics()
 test_predictions_arbre <- arbre_fit |> collect_predictions()
 
 # Sauvegarde du modèle final
-save(arbre_fit, file = "modele_final_arbre.RData")
+save(rec,tree_spec,data_cv,cost_complexity_grid,tune_tree_wf,tree_tune_res,tree_spec,param_grid,arbre_mod,arbre_wf,arbre_grid,arbre_tune_res,param_final_arbre,arbre_wf,arbre_fit,test_performance_arbre,test_predictions_arbre, file = "modele_final_arbre.RData")
 ```
 
 ```{r}
@@ -251,7 +251,7 @@ final_metrics
 ```{r}
 # Rééquilibrage des Classes
 library(themis)
-rec <- recipe(vhappy ~ ., data = train_data) %>%
+rec2 <- recipe(vhappy ~ ., data = train_data) %>%
   step_smote(vhappy, over_ratio = 0.8) %>%  # SMOTE pour sur-échantillonner
   step_normalize(all_numeric_predictors()) %>%
   step_dummy(all_nominal_predictors()) %>%
@@ -267,3 +267,8 @@ tree_grid <- grid_regular(
   levels = 10
 )
 ```
+
+```{r}
+save(eval_metrics,class_metrics,roc_auc,final_metrics,rec2,tree_grid,roc_curve_arbre,tab_arbre, file = "modele_metrics_arbre.RData")
+```
+

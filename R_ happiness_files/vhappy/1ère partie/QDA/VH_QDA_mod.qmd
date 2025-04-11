@@ -83,6 +83,6 @@ roc(test_data$vhappy, qda_result$.pred_no) %>% auc()
 Si proche de la bissectrice, le hasard est aussi bon que le modèle.
 
 ```{r}
-save(qda_result, file = "model_QDA.RData")
+save(qda_mod,dat_rec,qda_wf,qda_fit,qda_preds,qda_result, file = "model_QDA.RData")
 ```
 
